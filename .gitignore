@@ -1,0 +1,18 @@
+clouds.yaml
+.env
+.env.*
+*.pem
+*.key
+*.tfvars
+
+# Terraform
+.terraform/
+terraform.tfstate*
+*.log
+
+# Python / Ansible
+__pycache__/
+*.retry
+
+# System files
+.DS_Store
