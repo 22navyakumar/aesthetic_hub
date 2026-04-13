@@ -1,0 +1,290 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+      external_labels:
+        cluster: aesthetic-hub
+        environment: production
+
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+
+    scrape_configs:
+      # Prometheus self-scrape
+      - job_name: prometheus
+        static_configs:
+          - targets: ['localhost:9090']
+
+      # Kubernetes API server
+      - job_name: kubernetes-apiservers
+        kubernetes_sd_configs:
+          - role: endpoints
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_service_name, __meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: default;kubernetes;https
+
+      # Kubernetes nodes (kubelet)
+      - job_name: kubernetes-nodes
+        scheme: https
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # cAdvisor (container resource metrics)
+      - job_name: kubernetes-cadvisor
+        scheme: https
+        metrics_path: /metrics/cadvisor
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: true
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # Node exporter (host-level metrics)
+      - job_name: node-exporter
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [monitoring]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: node-exporter
+
+      # kube-state-metrics (Kubernetes object state)
+      - job_name: kube-state-metrics
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [monitoring]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: kube-state-metrics
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: http-metrics
+
+      # MLflow metrics
+      - job_name: mlflow
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [platform]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: mlflow
+
+      # Triton Inference Server metrics
+      - job_name: triton
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [aesthetic-hub, aesthetic-hub-staging, aesthetic-hub-canary]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: triton.*
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: metrics
+
+      # Argo Workflows metrics
+      - job_name: argo-workflows
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [argo]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: argo-server
+
+      # Auto-discover all pods with prometheus annotations
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - source_labels: [__meta_kubernetes_namespace]
+            action: replace
+            target_label: kubernetes_namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            action: replace
+            target_label: kubernetes_pod_name
+
+  alert-rules.yml: |
+    groups:
+      - name: infrastructure
+        rules:
+          - alert: NodeHighCPU
+            expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High CPU usage on {{ $labels.instance }}"
+              description: "CPU usage is {{ printf \"%.1f\" $value }}% (threshold: 85%) on node {{ $labels.instance }}"
+
+          - alert: NodeCriticalCPU
+            expr: 100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical CPU usage on {{ $labels.instance }}"
+              description: "CPU usage is {{ printf \"%.1f\" $value }}% (threshold: 95%) on node {{ $labels.instance }}"
+
+          - alert: NodeHighMemory
+            expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "High memory usage on {{ $labels.instance }}"
+              description: "Memory usage is {{ printf \"%.1f\" $value }}% (threshold: 85%) on node {{ $labels.instance }}"
+
+          - alert: NodeDiskSpaceLow
+            expr: (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Low disk space on {{ $labels.instance }}"
+              description: "Disk usage is {{ printf \"%.1f\" $value }}% (threshold: 80%) on node {{ $labels.instance }}"
+
+          - alert: NodeDiskSpaceCritical
+            expr: (1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100 > 90
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Critical disk space on {{ $labels.instance }}"
+              description: "Disk usage is {{ printf \"%.1f\" $value }}% (threshold: 90%). Immediate action required."
+
+          - alert: NodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Kubernetes node {{ $labels.node }} is not ready"
+              description: "Node {{ $labels.node }} has been not ready for more than 1 minute."
+
+          - alert: PodCrashLooping
+            expr: increase(kube_pod_container_status_restarts_total[10m]) > 3
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash looping"
+              description: "Container {{ $labels.container }} in pod {{ $labels.pod }} restarted {{ $value }} times in the last 10 minutes."
+
+          - alert: PodNotReady
+            expr: kube_pod_status_ready{condition="false"} == 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} has been not ready"
+              description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has not been ready for 10 minutes."
+
+          - alert: PVCUsageHigh
+            expr: (kubelet_volume_stats_used_bytes / kubelet_volume_stats_capacity_bytes) * 100 > 80
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PVC {{ $labels.persistentvolumeclaim }} usage is high"
+              description: "PVC {{ $labels.persistentvolumeclaim }} in {{ $labels.namespace }} is {{ printf \"%.1f\" $value }}% full."
+
+          - alert: DeploymentReplicasMismatch
+            expr: kube_deployment_spec_replicas != kube_deployment_status_available_replicas
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} replicas mismatch"
+              description: "Deployment has {{ $value }} available replicas but desired a different count for over 10 minutes."
+
+      - name: ml-pipeline
+        rules:
+          - alert: MLflowServiceDown
+            expr: up{job="mlflow"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "MLflow tracking server is down"
+              description: "MLflow is unreachable. Training runs cannot be logged. Investigate the mlflow pod in the platform namespace."
+
+          - alert: TritonServiceDown
+            expr: up{job="triton"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Triton inference server is down"
+              description: "Triton is not scraping. Aesthetic scoring is unavailable."
+
+          - alert: ArgoWorkflowFailed
+            expr: argo_workflows_count{status="Failed"} > 0
+            for: 0m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Argo Workflow has failed"
+              description: "One or more Argo Workflows are in a Failed state. Check the Argo UI for details."
+
+      - name: application
+        rules:
+          - alert: ImmichServerDown
+            expr: up{job="kubernetes-pods", kubernetes_namespace="aesthetic-hub"} == 0
+            for: 2m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Immich server is unreachable"
+              description: "The Immich server pod is not responding. Photo management is unavailable."
