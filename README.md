@@ -38,9 +38,9 @@ This repository focuses on the DevOps / Platform responsibilities:
 
 ## Current Status
 - [x] Phase 0 repo setup
-- [ ] Terraform infrastructure provisioning
-- [ ] Kubernetes cluster deployment
-- [ ] Platform services deployment
-- [ ] Application deployment
-- [ ] Persistence validation
-- [ ] Infrastructure sizing evidence
+- [x] Terraform infrastructure provisioning
+- [x] Kubernetes cluster deployment
+- [x] Platform services deployment
+- [x] Application deployment
+- [x] Persistence validation
+- [x] Infrastructure sizing evidence

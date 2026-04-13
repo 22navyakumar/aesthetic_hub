@@ -21,3 +21,4 @@
    - kubectl apply -f k8s/app/immich-server.yaml
    - kubectl apply -f k8s/app/immich-web.yaml
 10. Validate services with kubectl and browser access.
+      

@@ -14,7 +14,7 @@
   vars:
     argocd_username: "admin"
     repo_path: "https://github.com/teaching-on-testbeds/gourmetgram-iac.git"
-    app_name: "gourmetgram-platform"
+    app_name: "aes-platform"
     app_path: "k8s/platform"
     minio_access_key: "your-access-key"
     postgres_username: "user"
@@ -48,8 +48,8 @@
       set_fact:
         external_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
 
-    - name: Ensure gourmetgram-platform namespace exists
-      command: kubectl get namespace gourmetgram-platform
+    - name: Ensure aes-platform namespace exists
+      command: kubectl get namespace aes-platform
       register: ns_check
       failed_when: false
       changed_when: false
