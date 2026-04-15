@@ -1,0 +1,47 @@
+# Production environment: stable, promoted model version serving 100% of
+# aesthetic scoring traffic (after canary validation passes).
+
+replicaCount: 1
+
+scoringService:
+  image:
+    repository: localhost:5000/aesthetic-scoring
+    tag: stable
+    pullPolicy: IfNotPresent
+  port: 8080
+  modelUri: "models:/aesthetic-scorer/production"
+  mlflowTrackingUri: "http://mlflow.platform.svc.cluster.local:5000"
+
+triton:
+  enabled: true
+  image:
+    repository: nvcr.io/nvidia/tritonserver
+    tag: "24.10-py3"
+  port: 8000
+  metricsPort: 8002
+  modelRepository: "s3://triton-models/production"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+service:
+  type: ClusterIP
+  externalIP: ""
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
