@@ -29,6 +29,8 @@ spec:
         value: "aesthetic-hub-data"
       - name: model-name
         value: "aesthetic-scorer"
+      - name: serving-image
+        value: "ghcr.io/22navyakumar/aesthetic_hub/training:latest"
       # Quality gates (must match values justified in training team's report)
       - name: min-spearman-r
         value: "0.70"
@@ -58,6 +60,14 @@ spec:
                   value: "{{tasks.train.outputs.parameters.run-id}}"
                 - name: stage
                   value: "Staging"
+          - name: export-onnx
+            template: export-onnx
+            dependencies: [register-to-staging]
+            when: "{{tasks.evaluate.outputs.parameters.gates-passed}} == true"
+            arguments:
+              parameters:
+                - name: run-id
+                  value: "{{tasks.train.outputs.parameters.run-id}}"
 
     - name: train-model
       outputs:
@@ -166,3 +176,71 @@ spec:
           requests:
             cpu: 100m
             memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+    - name: export-onnx
+      # Converts best_ckpt.pt from MLflow into ONNX and writes to model-store-pvc
+      # so the inference deployment can pick it up without a redeploy.
+      inputs:
+        parameters:
+          - name: run-id
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store-pvc
+      container:
+        image: "{{workflow.parameters.training-image}}"
+        command: [python]
+        args:
+          - -c
+          - |
+            import mlflow, torch, os
+            run_id = "{{inputs.parameters.run-id}}"
+            client = mlflow.MlflowClient()
+
+            # Download best checkpoint from MLflow
+            local_path = client.download_artifacts(run_id, "best_ckpt.pt", "/tmp")
+            ckpt = torch.load(local_path, map_location="cpu")
+
+            import sys
+            sys.path.insert(0, "/app/src/flickr")
+            from flickr_common import GlobalMLP
+            model = GlobalMLP()
+            model.load_state_dict(ckpt["model_state_dict"])
+            model.eval()
+
+            # Export global model
+            dummy = torch.randn(1, 768)
+            torch.onnx.export(
+                model, dummy,
+                "/models/flickr_global.onnx",
+                input_names=["embedding"],
+                output_names=["score"],
+                dynamic_axes={"embedding": {0: "batch"}, "score": {0: "batch"}},
+                opset_version=17,
+            )
+            print("Exported flickr_global.onnx")
+        env:
+          - name: MLFLOW_TRACKING_URI
+            value: "{{workflow.parameters.mlflow-uri}}"
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: secretkey
+        volumeMounts:
+          - name: model-store
+            mountPath: /models
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
