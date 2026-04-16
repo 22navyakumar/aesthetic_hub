@@ -13,6 +13,4 @@ spec:
     - name: console
       port: 9001
       targetPort: 9001
-<<<<<<< HEAD
   type: NodePort
->>>>>>> aca1f3d (Add Kubernetes manifests for Immich app and MinIO platform with persistent storage on Chameleon)
