@@ -13,7 +13,7 @@
   become: yes
   vars:
     argocd_username: "admin"
-    repo_path: "https://github.com/teaching-on-testbeds/gourmetgram-iac.git"
+    repo_path: "https://github.com/22navyakumar/aesthetic_hub.git"
     app_name: "aes-platform"
     app_path: "k8s/platform"
     minio_access_key: "your-access-key"
@@ -54,12 +54,12 @@
       failed_when: false
       changed_when: false
 
-    - name: Create gourmetgram-platform namespace if missing
+    - name: Create aes-platform namespace if missing
       when: ns_check.rc != 0
-      command: kubectl create namespace gourmetgram-platform
+      command: kubectl create namespace aes-platform
 
     - name: Check if MinIO secret already exists
-      command: kubectl get secret minio-credentials -n gourmetgram-platform
+      command: kubectl get secret minio-credentials -n aes-platform
       register: minio_secret_check
       failed_when: false
       changed_when: false
@@ -73,13 +73,13 @@
       when: minio_secret_check.rc != 0
       command: >
         kubectl create secret generic minio-credentials
-        --namespace gourmetgram-platform
+        --namespace aes-platform
         --from-literal=accesskey={{ minio_access_key }}
         --from-literal=secretkey={{ minio_secret_key }}
       register: minio_secret_create
 
     - name: Check if Postgres secret already exists
-      command: kubectl get secret postgres-credentials -n gourmetgram-platform
+      command: kubectl get secret postgres-credentials -n aes-platform
       register: postgres_secret_check
       failed_when: false
       changed_when: false
@@ -93,7 +93,7 @@
       when: postgres_secret_check.rc != 0
       command: >
         kubectl create secret generic postgres-credentials
-        --namespace gourmetgram-platform
+        --namespace aes-platform
         --from-literal=username={{ postgres_username }}
         --from-literal=password={{ postgres_password }}
         --from-literal=dbname={{ postgres_db }}

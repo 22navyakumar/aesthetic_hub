@@ -18,7 +18,7 @@ spec:
           image: ghcr.io/immich-app/immich-web:release
           env:
             - name: IMMICH_SERVER_URL
-              value: http://immich-server:3000
+              value: http://immich-server:2283
           ports:
             - containerPort: 3000
 ---
@@ -33,4 +33,5 @@ spec:
   ports:
     - port: 3000
       targetPort: 3000
+      nodePort: 30114
   type: NodePort

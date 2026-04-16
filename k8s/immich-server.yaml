@@ -64,3 +64,5 @@ spec:
   ports:
     - port: 2283
       targetPort: 2283
+      nodePort: 32081
+  type: NodePort
