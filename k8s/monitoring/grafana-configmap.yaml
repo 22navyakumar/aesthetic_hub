@@ -36,6 +36,156 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: grafana-dashboard-mlpipeline
+  namespace: monitoring
+data:
+  ml-pipeline-overview.json: |
+    {
+      "title": "ML Pipeline Dashboard - Training & Inference Monitoring",
+      "uid": "aes-mlpipeline",
+      "description": "Monitor ML training pipelines, model serving inference latency, and data pipeline throughput",
+      "tags": ["ml", "mlflow", "triton", "training", "inference"],
+      "timezone": "browser",
+      "schemaVersion": 38,
+      "version": 1,
+      "refresh": "15s",
+      "time": { "from": "now-6h", "to": "now" },
+      "panels": [
+        {
+          "id": 1,
+          "title": "MLflow Training Jobs Status",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+          "targets": [{"expr": "up{job=\"mlflow\"}", "legendFormat": "MLflow"}],
+          "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]}}
+        },
+        {
+          "id": 2,
+          "title": "MLflow Server Availability",
+          "type": "gauge",
+          "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+          "targets": [{"expr": "up{job=\"mlflow\"} * 100", "legendFormat": "Availability %"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 100}]}}}
+        },
+        {
+          "id": 3,
+          "title": "Triton Inference Server Status",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+          "targets": [{"expr": "up{job=\"triton\"}", "legendFormat": "Triton"}],
+          "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "UP", "color": "green"}}}]}}
+        },
+        {
+          "id": 12,
+          "title": "Model Registry Active Models",
+          "type": "stat",
+          "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+          "targets": [{"expr": "count(mlflow_model_version{stage=\"Production\"}) or vector(0)", "legendFormat": "Production Models"}]
+        },
+        {
+          "id": 4,
+          "title": "Model Inference Latency (P99)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+          "targets": [{"expr": "histogram_quantile(0.99, rate(triton_inference_request_duration_us[5m]))", "legendFormat": "Triton P99 Latency"}],
+          "fieldConfig": {"defaults": {"unit": "µs", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 500000}, {"color": "red", "value": 1000000}]}}}
+        },
+        {
+          "id": 5,
+          "title": "Model Inference Throughput",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+          "targets": [{"expr": "rate(triton_inference_request_total[5m])", "legendFormat": "Requests/sec"}],
+          "fieldConfig": {"defaults": {"unit": "reqps"}}
+        },
+        {
+          "id": 6,
+          "title": "Inference Success Rate",
+          "type": "gauge",
+          "gridPos": {"h": 8, "w": 6, "x": 0, "y": 12},
+          "targets": [{"expr": "(sum(rate(triton_inference_request_total{success=\"true\"}[5m])) / sum(rate(triton_inference_request_total[5m]))) * 100", "legendFormat": "Success %"}],
+          "fieldConfig": {"defaults": {"unit": "percent", "max": 100, "min": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 90}, {"color": "green", "value": 95}]}}}
+        },
+        {
+          "id": 13,
+          "title": "Triton Memory Usage",
+          "type": "gauge",
+          "gridPos": {"h": 8, "w": 6, "x": 6, "y": 12},
+          "targets": [{"expr": "triton_server_memory_usage_bytes / 1024 / 1024 / 1024", "legendFormat": "Memory GB"}],
+          "fieldConfig": {"defaults": {"unit": "decgbytes", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 2}, {"color": "red", "value": 3}]}}}
+        },
+        {
+          "id": 7,
+          "title": "Inference Error Rate",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+          "targets": [{"expr": "rate(triton_inference_request_total{success=\"false\"}[5m])", "legendFormat": "Errors/sec"}],
+          "fieldConfig": {"defaults": {"unit": "reqps", "color": {"mode": "fixed", "fixedColor": "red"}}}
+        },
+        {
+          "id": 14,
+          "title": "Inference Queue Depth",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [{"expr": "triton_inference_queue_depth", "legendFormat": "Queue Depth"}],
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 50}, {"color": "red", "value": 100}]}}}
+        },
+        {
+          "id": 16,
+          "title": "Feature Store Latency (P95)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [{"expr": "histogram_quantile(0.95, rate(feature_store_request_duration_seconds_bucket[5m]))", "legendFormat": "P95 Latency"}],
+          "fieldConfig": {"defaults": {"unit": "s", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 1}, {"color": "red", "value": 2}]}}}
+        },
+        {
+          "id": 10,
+          "title": "Data Pipeline Throughput",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "targets": [{"expr": "rate(data_pipeline_processed_records[5m])", "legendFormat": "Records/sec"}],
+          "fieldConfig": {"defaults": {"unit": "reqps"}}
+        },
+        {
+          "id": 11,
+          "title": "Training Job Duration",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "targets": [{"expr": "mlflow_training_job_duration_seconds", "legendFormat": "{{job_name}}"}],
+          "fieldConfig": {"defaults": {"unit": "s"}}
+        },
+        {
+          "id": 8,
+          "title": "Aesthetic Score Distribution",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 36},
+          "targets": [
+            {"expr": "histogram_quantile(0.5, rate(aesthetic_score_bucket[5m]))", "legendFormat": "P50"},
+            {"expr": "histogram_quantile(0.9, rate(aesthetic_score_bucket[5m]))", "legendFormat": "P90"},
+            {"expr": "histogram_quantile(0.99, rate(aesthetic_score_bucket[5m]))", "legendFormat": "P99"}
+          ]
+        },
+        {
+          "id": 9,
+          "title": "Model Prediction Confidence",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 8, "x": 12, "y": 36},
+          "targets": [{"expr": "avg(model_prediction_confidence) by (model_version)", "legendFormat": "{{model_version}}"}]
+        },
+        {
+          "id": 15,
+          "title": "Model Load Failures (1h)",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 4, "x": 20, "y": 36},
+          "targets": [{"expr": "increase(triton_model_load_failures_total[1h]) or vector(0)", "legendFormat": "Load Failures"}],
+          "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: grafana-dashboard-infrastructure
   namespace: monitoring
 data:

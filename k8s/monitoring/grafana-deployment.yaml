@@ -75,6 +75,9 @@ spec:
             - name: dashboard-infrastructure
               mountPath: /var/lib/grafana/dashboards/infrastructure-overview.json
               subPath: infrastructure-overview.json
+            - name: dashboard-mlpipeline
+              mountPath: /var/lib/grafana/dashboards/ml-pipeline-overview.json
+              subPath: ml-pipeline-overview.json
           livenessProbe:
             httpGet:
               path: /api/health
@@ -107,6 +110,9 @@ spec:
         - name: dashboard-infrastructure
           configMap:
             name: grafana-dashboard-infrastructure
+        - name: dashboard-mlpipeline
+          configMap:
+            name: grafana-dashboard-mlpipeline
 ---
 apiVersion: v1
 kind: Service
