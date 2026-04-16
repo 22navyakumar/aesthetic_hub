@@ -83,9 +83,9 @@ spec:
                 path: prometheus.yml
         - name: rules
           configMap:
-            name: prometheus-config
+            name: prometheus-alert-rules
             items:
-              - key: alert-rules.yml
+              - key: alert-rules.yaml
                 path: alert-rules.yml
         - name: data
           persistentVolumeClaim:

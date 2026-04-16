@@ -1,0 +1,139 @@
+---
+# PVC to hold ONNX model files written by the Argo export-onnx step.
+# Serving pods mount this read-only; the export step mounts it read-write.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-store-pvc
+  namespace: aesthetic-hub
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aesthetic-inference
+  namespace: aesthetic-hub
+  labels:
+    app: aesthetic-inference
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: aesthetic-inference
+  template:
+    metadata:
+      labels:
+        app: aesthetic-inference
+    spec:
+      initContainers:
+        # Blocks startup until both ONNX files exist on the PVC.
+        # Remove this init container once models are pre-populated.
+        - name: wait-for-models
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for ONNX models..."
+              until [ -f /models/flickr_global.onnx ] && [ -f /models/flickr_personalized.onnx ]; do
+                echo "Models not ready yet, retrying in 10s..."
+                sleep 10
+              done
+              echo "Models found, starting serving container."
+          volumeMounts:
+            - name: model-store
+              mountPath: /models
+      containers:
+        - name: inference-server
+          image: ghcr.io/somadisingh/aesthetic-hub-serving:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: GLOBAL_ONNX_PATH
+              value: /models/flickr_global.onnx
+            - name: PERSONAL_ONNX_PATH
+              value: /models/flickr_personalized.onnx
+          volumeMounts:
+            - name: model-store
+              mountPath: /models
+              readOnly: true
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: model-store
+          persistentVolumeClaim:
+            claimName: model-store-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aesthetic-inference
+  namespace: aesthetic-hub
+  labels:
+    app: aesthetic-inference
+spec:
+  selector:
+    app: aesthetic-inference
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+      nodePort: 30800
+  type: NodePort
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: aesthetic-inference-hpa
+  namespace: aesthetic-hub
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: aesthetic-inference
+  minReplicas: 2
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
