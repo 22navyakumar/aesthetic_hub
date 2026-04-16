@@ -70,7 +70,11 @@ spec:
             - name: dashboards-provider
               mountPath: /etc/grafana/provisioning/dashboards
             - name: dashboard-cluster
-              mountPath: /var/lib/grafana/dashboards
+              mountPath: /var/lib/grafana/dashboards/cluster-overview.json
+              subPath: cluster-overview.json
+            - name: dashboard-infrastructure
+              mountPath: /var/lib/grafana/dashboards/infrastructure-overview.json
+              subPath: infrastructure-overview.json
           livenessProbe:
             httpGet:
               path: /api/health
@@ -100,6 +104,9 @@ spec:
         - name: dashboard-cluster
           configMap:
             name: grafana-dashboard-cluster
+        - name: dashboard-infrastructure
+          configMap:
+            name: grafana-dashboard-infrastructure
 ---
 apiVersion: v1
 kind: Service
