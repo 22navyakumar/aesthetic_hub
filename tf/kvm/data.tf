@@ -38,3 +38,7 @@ data "openstack_networking_secgroup_v2" "allow_9090" {
   name = "allow-9090"
 }
 
+data "openstack_networking_secgroup_v2" "immich_nodeport" {
+  name = "immich-nodeport-proj21"
+}
+
