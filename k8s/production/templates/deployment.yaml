@@ -36,6 +36,22 @@ spec:
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: production
+            - name: POSTGRES_HOST
+              value: "immich-postgres.aesthetic-hub.svc.cluster.local"
+            - name: POSTGRES_DB
+              value: "immich"
+            - name: POSTGRES_USER
+              value: "postgres"
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: immich-postgres-secret
+              #     key: username
+            - name: POSTGRES_PASSWORD
+              value: "postgres123"
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: immich-postgres-secret
+              #     key: password
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
