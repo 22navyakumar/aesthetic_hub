@@ -8,43 +8,30 @@ from prometheus_client import Histogram, Counter, make_asgi_app
 from models import ScoreRequest, ScoreBatchRequest, ScoreResponse
 from triton_client import infer_global, infer_personalized
 import db
-import user2idx_cache
 
-# --- Prometheus metrics ---
 ENV = os.environ.get("ENVIRONMENT", "production")
+MODEL_VERSION = os.environ.get("MODEL_VERSION", "unknown")
 
 LATENCY = Histogram(
     "scoring_latency_seconds", "End-to-end latency",
     ["environment"],
     buckets=[.005, .01, .025, .05, .1, .25, .5]
 )
-ALPHA_HIST = Histogram(
-    "scoring_alpha", "Alpha blending value",
-    buckets=[0, .1, .2, .3, .5, .7, .9, 1.0]
-)
-SCORE_HIST = Histogram(
-    "scoring_final_score", "Final score distribution",
-    buckets=[i/10 for i in range(11)]
-)
-ERRORS = Counter(
-    "scoring_errors_total", "Errors", ["reason"]
-)
-LOW_CONF = Counter(
-    "scoring_low_confidence_total", "Low-confidence flags"
-)
+ALPHA_HIST = Histogram("scoring_alpha", "Alpha value",
+                       buckets=[0, .1, .2, .3, .5, .7, .9, 1.0])
+SCORE_HIST = Histogram("scoring_final_score", "Score distribution",
+                       buckets=[i/10 for i in range(11)])
+ERRORS = Counter("scoring_errors_total", "Errors", ["reason"])
+LOW_CONF = Counter("scoring_low_confidence_total", "Low-confidence flags")
 
-TAU = 10
 LOW_CONF_THRESHOLD = 0.15
 DIVERGENCE_THRESHOLD = 0.4
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load user2idx cache from MinIO on startup
-    user2idx_cache.load()
-    print(f"[startup] user2idx cache loaded: {user2idx_cache.size()} users")
+    print(f"[startup] Scoring service starting — env={ENV}, model_version={MODEL_VERSION}")
     yield
-    # Nothing to clean up
 
 
 app = FastAPI(title="Aesthetic Scoring Service", lifespan=lifespan)
@@ -52,48 +39,40 @@ app.mount("/metrics", make_asgi_app())
 
 
 def _score(request: ScoreRequest) -> ScoreResponse:
-    embedding = np.array(request.embedding, dtype=np.float32)
+    request_received_at = time.time()
 
-    if len(embedding) != 768:
+    clip_emb = np.array(request.clip_embedding, dtype=np.float32)
+    if len(clip_emb) != 768:
         ERRORS.labels(reason="bad_embedding").inc()
-        raise ValueError(f"Expected 768-dim embedding, got {len(embedding)}")
-
-    # --- Get n_interactions from Postgres ---
-    try:
-        n_interactions = db.get_n_interactions(request.user_id)
-    except Exception:
-        ERRORS.labels(reason="db_error").inc()
-        n_interactions = 0  # degrade gracefully
-
-    # --- Get user_idx from in-memory cache (loaded from MinIO) ---
-    user_idx = user2idx_cache.get_user_idx(request.user_id)
-
-    # Alpha: 0 if no interactions OR user not in mapping yet
-    alpha = n_interactions / (n_interactions + TAU) if user_idx is not None else 0.0
+        raise ValueError(f"Expected 768-dim clip_embedding, got {len(clip_emb)}")
 
     # --- Global model (always called) ---
     try:
-        g_score = infer_global(embedding)
+        g_score = infer_global(clip_emb)
     except Exception:
         ERRORS.labels(reason="triton_global_failed").inc()
         raise HTTPException(status_code=503, detail="Global model unavailable")
 
-    # --- Personalized model (only if user is in mapping AND has interactions) ---
+    # --- Personalized model ---
     p_score = None
-    if user_idx is not None and alpha > 0:
-        try:
-            p_score = infer_personalized(embedding, user_idx)
-        except Exception:
-            # Graceful degradation — fall back to global
-            ERRORS.labels(reason="triton_personalized_failed").inc()
-            alpha = 0.0
+    if not request.is_cold_start and request.user_embedding is not None and request.alpha > 0:
+        user_emb = np.array(request.user_embedding, dtype=np.float32)
+        if len(user_emb) != 64:
+            ERRORS.labels(reason="bad_user_embedding").inc()
+        else:
+            try:
+                p_score = infer_personalized(clip_emb, user_emb)
+            except Exception:
+                ERRORS.labels(reason="triton_personalized_failed").inc()
 
-    # --- Blend ---
+    # --- Blend using pre-computed alpha from feature-svc ---
+    alpha = request.alpha
     if p_score is not None:
         final_score = (1 - alpha) * g_score + alpha * p_score
         divergence = abs(g_score - p_score)
     else:
         final_score = g_score
+        alpha = 0.0
         divergence = 0.0
 
     low_confidence = (
@@ -101,18 +80,45 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         divergence > DIVERGENCE_THRESHOLD
     )
 
+    computed_at = time.time()
+
+    # --- Write to inference_log ---
+    db.write_inference_log(
+        request_id=request.request_id,
+        asset_id=request.asset_id,
+        user_id=request.user_id,
+        alpha=alpha,
+        model_version=request.model_version or MODEL_VERSION,
+        is_cold_start=request.is_cold_start,
+        request_received_at=request_received_at,
+        computed_at=computed_at
+    )
+
+    # --- Upsert aesthetic_scores ---
+    db.upsert_aesthetic_score(
+        asset_id=request.asset_id,
+        user_id=request.user_id,
+        score=final_score,
+        alpha=alpha,
+        model_version=request.model_version or MODEL_VERSION,
+        is_cold_start=request.is_cold_start,
+        request_id=request.request_id
+    )
+
     ALPHA_HIST.observe(alpha)
     SCORE_HIST.observe(final_score)
-    LATENCY.labels(environment=ENV)  # label initialized here
     if low_confidence:
         LOW_CONF.inc()
 
     return ScoreResponse(
-        image_id=request.image_id,
+        asset_id=request.asset_id,
+        user_id=request.user_id,
         score=round(final_score, 4),
-        alpha=round(alpha, 4),
         global_score=round(g_score, 4),
         personalized_score=round(p_score, 4) if p_score is not None else None,
+        alpha=round(alpha, 4),
+        is_cold_start=request.is_cold_start,
+        model_version=request.model_version or MODEL_VERSION,
         low_confidence=low_confidence
     )
 
@@ -140,10 +146,13 @@ def score_batch(request: ScoreBatchRequest):
             results.append(_score(item))
         except Exception:
             results.append(ScoreResponse(
-                image_id=item.image_id,
+                asset_id=item.asset_id,
+                user_id=item.user_id,
                 score=0.5,
-                alpha=0.0,
                 global_score=0.5,
+                alpha=0.0,
+                is_cold_start=True,
+                model_version=None,
                 low_confidence=True
             ))
         finally:
@@ -153,8 +162,4 @@ def score_batch(request: ScoreBatchRequest):
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
-        "user2idx_size": user2idx_cache.size(),
-        "environment": ENV
-    }
+    return {"status": "ok", "environment": ENV, "model_version": MODEL_VERSION}
