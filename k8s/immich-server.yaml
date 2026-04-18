@@ -27,7 +27,7 @@ spec:
               mountPath: /data
       containers:
         - name: immich-server
-          image: ghcr.io/immich-app/immich-server:release
+          image: ghcr.io/binti-p/immich/immich-server:latest
           env:
             - name: DB_HOSTNAME
               value: immich-postgres
@@ -43,6 +43,8 @@ spec:
               value: /data
             - name: IMMICH_HOST
               value: "0.0.0.0"
+            - name: MACHINE_LEARNING_URL
+              value: http://immich-machine-learning:3003
           ports:
             - containerPort: 2283
           volumeMounts:
