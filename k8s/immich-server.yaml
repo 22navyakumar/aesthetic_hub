@@ -41,7 +41,7 @@ spec:
               value: immich-redis
             - name: UPLOAD_LOCATION
               value: /data
-            - name: IMMICH_HOST
+            - name: HOST
               value: "0.0.0.0"
             - name: MACHINE_LEARNING_URL
               value: http://immich-machine-learning:3003
