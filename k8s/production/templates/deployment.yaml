@@ -52,6 +52,22 @@ spec:
               #   secretKeyRef:
               #     name: immich-postgres-secret
               #     key: password
+            - name: MINIO_ENDPOINT
+              value: "http://minio.platform.svc.cluster.local:9000"
+            - name: MINIO_BUCKET
+              value: "triton-models"
+            - name: AWS_ACCESS_KEY_ID
+              value: "minioadmin"
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: minio-credentials
+              #     key: accesskey
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "minioadmin"
+              # valueFrom:
+              #   secretKeyRef:
+              #     name: minio-credentials
+              #     key: secretkey
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http

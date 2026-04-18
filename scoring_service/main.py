@@ -1,30 +1,53 @@
+import os
 import time
 import numpy as np
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from prometheus_client import Histogram, Counter, make_asgi_app
 
 from models import ScoreRequest, ScoreBatchRequest, ScoreResponse
 from triton_client import infer_global, infer_personalized
-from db import get_user_idx
+import db
+import user2idx_cache
 
 # --- Prometheus metrics ---
 ENV = os.environ.get("ENVIRONMENT", "production")
 
-LATENCY = Histogram("scoring_latency_seconds", "End-to-end latency",
-                    ["environment"],
-                    buckets=[.005, .01, .025, .05, .1, .25, .5])
-ALPHA_HIST = Histogram("scoring_alpha", "Alpha blending value",
-                       buckets=[0, .1, .2, .3, .5, .7, .9, 1.0])
-SCORE_HIST = Histogram("scoring_final_score", "Final score distribution",
-                       buckets=[i/10 for i in range(11)])
-ERRORS = Counter("scoring_errors_total", "Errors", ["reason"])
-LOW_CONF = Counter("scoring_low_confidence_total", "Low-confidence flags")
+LATENCY = Histogram(
+    "scoring_latency_seconds", "End-to-end latency",
+    ["environment"],
+    buckets=[.005, .01, .025, .05, .1, .25, .5]
+)
+ALPHA_HIST = Histogram(
+    "scoring_alpha", "Alpha blending value",
+    buckets=[0, .1, .2, .3, .5, .7, .9, 1.0]
+)
+SCORE_HIST = Histogram(
+    "scoring_final_score", "Final score distribution",
+    buckets=[i/10 for i in range(11)]
+)
+ERRORS = Counter(
+    "scoring_errors_total", "Errors", ["reason"]
+)
+LOW_CONF = Counter(
+    "scoring_low_confidence_total", "Low-confidence flags"
+)
 
 TAU = 10
 LOW_CONF_THRESHOLD = 0.15
 DIVERGENCE_THRESHOLD = 0.4
 
-app = FastAPI(title="Aesthetic Scoring Service")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load user2idx cache from MinIO on startup
+    user2idx_cache.load()
+    print(f"[startup] user2idx cache loaded: {user2idx_cache.size()} users")
+    yield
+    # Nothing to clean up
+
+
+app = FastAPI(title="Aesthetic Scoring Service", lifespan=lifespan)
 app.mount("/metrics", make_asgi_app())
 
 
@@ -35,14 +58,18 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         ERRORS.labels(reason="bad_embedding").inc()
         raise ValueError(f"Expected 768-dim embedding, got {len(embedding)}")
 
-    # --- Lookup user state ---
+    # --- Get n_interactions from Postgres ---
     try:
-        user_idx, n_interactions = get_user_idx(request.user_id)
+        n_interactions = db.get_n_interactions(request.user_id)
     except Exception:
         ERRORS.labels(reason="db_error").inc()
-        user_idx, n_interactions = None, 0   # degrade gracefully
+        n_interactions = 0  # degrade gracefully
 
-    alpha = n_interactions / (n_interactions + TAU)
+    # --- Get user_idx from in-memory cache (loaded from MinIO) ---
+    user_idx = user2idx_cache.get_user_idx(request.user_id)
+
+    # Alpha: 0 if no interactions OR user not in mapping yet
+    alpha = n_interactions / (n_interactions + TAU) if user_idx is not None else 0.0
 
     # --- Global model (always called) ---
     try:
@@ -51,13 +78,13 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         ERRORS.labels(reason="triton_global_failed").inc()
         raise HTTPException(status_code=503, detail="Global model unavailable")
 
-    # --- Personalized model (only if user is mapped AND has interactions) ---
+    # --- Personalized model (only if user is in mapping AND has interactions) ---
     p_score = None
     if user_idx is not None and alpha > 0:
         try:
             p_score = infer_personalized(embedding, user_idx)
         except Exception:
-            # Graceful degradation: fall back to global
+            # Graceful degradation — fall back to global
             ERRORS.labels(reason="triton_personalized_failed").inc()
             alpha = 0.0
 
@@ -70,11 +97,13 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         divergence = 0.0
 
     low_confidence = (
-        final_score < LOW_CONF_THRESHOLD or divergence > DIVERGENCE_THRESHOLD
+        final_score < LOW_CONF_THRESHOLD or
+        divergence > DIVERGENCE_THRESHOLD
     )
 
     ALPHA_HIST.observe(alpha)
     SCORE_HIST.observe(final_score)
+    LATENCY.labels(environment=ENV)  # label initialized here
     if low_confidence:
         LOW_CONF.inc()
 
@@ -110,7 +139,6 @@ def score_batch(request: ScoreBatchRequest):
         try:
             results.append(_score(item))
         except Exception:
-            # Return neutral fallback score rather than failing the whole batch
             results.append(ScoreResponse(
                 image_id=item.image_id,
                 score=0.5,
@@ -125,4 +153,8 @@ def score_batch(request: ScoreBatchRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "user2idx_size": user2idx_cache.size(),
+        "environment": ENV
+    }

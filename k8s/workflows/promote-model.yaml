@@ -60,6 +60,8 @@ spec:
                   value: "{{workflow.parameters.from-stage}}"
                 - name: to-stage
                   value: "{{workflow.parameters.to-stage}}"
+                - name: rollback
+                  value: "{{workflow.parameters.rollback}}"
         - - name: sync-argocd
             template: argocd-sync
             arguments:
@@ -204,12 +206,13 @@ spec:
         parameters:
           - name: from-stage   # e.g. "staging"
           - name: to-stage     # e.g. "canary" or "production"
+          - name: rollback
       container:
         image: ghcr.io/mlflow/mlflow:v2.13.2
         command: [python, -c]
         args:
           - |
-            import boto3, os
+            import boto3, os, json
             from botocore.client import Config
 
             s3 = boto3.client(
@@ -224,21 +227,82 @@ spec:
             bucket = "triton-models"
             from_stage = "{{inputs.parameters.from-stage}}".lower()
             to_stage = "{{inputs.parameters.to-stage}}".lower()
+            is_rollback = "{{workflow.parameters.rollback}}" == "true"
 
-            models = ["flickr_personalized"]
-            for model in models:
-                src_key = f"{from_stage}/{model}/1/model.onnx"
-                dst_key = f"{to_stage}/{model}/1/model.onnx"
-                copy_source = {"Bucket": bucket, "Key": src_key}
+            # Global model never changes — only sync personalized
+            model = "personalized_mlp"
+
+            if is_rollback:
+                # Find highest version in production and delete it
+                prefix = f"production/{model}/"
+                resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/")
+                folders = [
+                    int(p["Prefix"].rstrip("/").split("/")[-1])
+                    for p in resp.get("CommonPrefixes", [])
+                    if p["Prefix"].rstrip("/").split("/")[-1].isdigit()
+                ]
+                if not folders:
+                    raise RuntimeError("No versioned folders found in production — cannot rollback")
+                
+                highest = max(folders)
+                if highest == 1:
+                    raise RuntimeError("Only one version exists — cannot rollback further")
+                
+                # Delete highest version
+                key = f"production/{model}/{highest}/model.onnx"
+                s3.delete_object(Bucket=bucket, Key=key)
+                print(f"Rollback: deleted production/{model}/{highest}/model.onnx")
+                print(f"Triton will fall back to version {highest - 1} within 60s")
+
+            elif to_stage == "production":
+                # Versioned copy: find N, copy to N+1
+                prefix = f"production/{model}/"
+                resp = s3.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/")
+                folders = [
+                    int(p["Prefix"].rstrip("/").split("/")[-1])
+                    for p in resp.get("CommonPrefixes", [])
+                    if p["Prefix"].rstrip("/").split("/")[-1].isdigit()
+                ]
+                current_version = max(folders) if folders else 0
+                new_version = current_version + 1
+
+                # Copy model
                 s3.copy_object(
-                    CopySource=copy_source,
+                    CopySource={"Bucket": bucket, "Key": f"{from_stage}/{model}/1/model.onnx"},
                     Bucket=bucket,
-                    Key=dst_key
+                    Key=f"production/{model}/{new_version}/model.onnx"
                 )
-                print(f"Copied {src_key} → {dst_key}")
+                print(f"Promoted {from_stage}/{model}/1/model.onnx → production/{model}/{new_version}/model.onnx")
 
-            print(f"Triton model sync complete: {from_stage} → {to_stage}")
-            print("Triton will pick up new models within 60 seconds via poll.")
+                # Copy user2idx.json
+                s3.copy_object(
+                    CopySource={"Bucket": bucket, "Key": f"{from_stage}/{model}/user2idx.json"},
+                    Bucket=bucket,
+                    Key=f"production/{model}/user2idx.json"
+                )
+                print(f"Copied user2idx.json to production")
+
+                # Clean up old versions — keep only last 2
+                if current_version >= 2:
+                    old_version = current_version - 1
+                    s3.delete_object(Bucket=bucket, Key=f"production/{model}/{old_version}/model.onnx")
+                    print(f"Deleted old version {old_version}")
+
+            else:
+                # Staging or canary — simple overwrite of 1/
+                s3.copy_object(
+                    CopySource={"Bucket": bucket, "Key": f"{from_stage}/{model}/1/model.onnx"},
+                    Bucket=bucket,
+                    Key=f"{to_stage}/{model}/1/model.onnx"
+                )
+                s3.copy_object(
+                    CopySource={"Bucket": bucket, "Key": f"{from_stage}/{model}/user2idx.json"},
+                    Bucket=bucket,
+                    Key=f"{to_stage}/{model}/user2idx.json"
+                )
+                print(f"Copied {from_stage} → {to_stage} (overwrite)")
+
+            print("Sync complete. Triton will pick up changes within 60s.")
         env:
           - name: MLFLOW_S3_ENDPOINT_URL
             value: "{{workflow.parameters.minio-endpoint}}"

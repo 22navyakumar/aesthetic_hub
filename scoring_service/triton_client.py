@@ -20,7 +20,7 @@ def infer_global(embedding: np.ndarray) -> float:
     inp.set_data_from_numpy(embedding.reshape(1, 768))
 
     out = triton_http.InferRequestedOutput("output")
-    result = client.infer("flickr_global", inputs=[inp], outputs=[out])
+    result = client.infer("global_mlp", inputs=[inp], outputs=[out])
     return float(result.as_numpy("output")[0][0])
 
 def infer_personalized(embedding: np.ndarray, user_idx: int) -> float:
@@ -38,7 +38,7 @@ def infer_personalized(embedding: np.ndarray, user_idx: int) -> float:
 
     out = triton_http.InferRequestedOutput("output")
     result = client.infer(
-        "flickr_personalized",
+        "personalized_mlp",
         inputs=[inp_emb, inp_idx],
         outputs=[out]
     )

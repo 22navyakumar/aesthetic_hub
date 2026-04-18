@@ -162,7 +162,3 @@ spec:
           requests:
             cpu: 250m
             memory: 256Mi
-
-# 1. user embedding onnx issue, onnx model doesnt store user embedding
-# 2. how are different model versions stored on minio, will there be a numbered 2,3,4 folder as we keep going forward and have multiple models, then how does the rollback work here
-# 3. from what i can see onnx conversion is happening here, but i particularly want graph omptimized onnx version, i can share the code with you for the same, how to do that since the saved ckpt will need to be converted to graph optimized onnx b4 being sent to staging area in minio

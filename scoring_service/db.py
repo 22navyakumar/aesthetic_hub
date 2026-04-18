@@ -9,17 +9,17 @@ def get_conn():
         password=os.environ["POSTGRES_PASSWORD"]
     )
 
-def get_user_idx(user_id: str) -> tuple[int | None, int]:
+def get_n_interactions(user_id: str) -> int:
     """
-    Returns (user_idx, n_interactions).
-    user_idx is None if user doesn't exist in the mapping yet.
+    Returns number of interactions for this user.
+    Returns 0 if user not found (new user, no interactions yet).
     """
     conn = get_conn()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT user_idx, n_interactions
+                SELECT n_interactions
                 FROM aesthetic_user_mapping
                 WHERE user_id = %s
                 """,
@@ -27,7 +27,10 @@ def get_user_idx(user_id: str) -> tuple[int | None, int]:
             )
             row = cur.fetchone()
             if row is None:
-                return None, 0
-            return row[0], row[1]
+                return 0
+            return int(row[0])
+    except Exception as e:
+        print(f"[db] WARNING: Failed to fetch n_interactions for {user_id}: {e}")
+        return 0
     finally:
         conn.close()
