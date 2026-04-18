@@ -466,3 +466,22 @@ data:
             annotations:
               summary: "More than 30% of scores flagged low-confidence"
               description: "Possible model drift or data quality issue"
+          
+          - alert: ScoreDrift
+            expr: |
+              abs(
+                avg_over_time(scoring_final_score_sum[1h])
+                /
+                avg_over_time(scoring_latency_seconds_count[1h])
+                -
+                avg_over_time(scoring_final_score_sum[7d])
+                /
+                avg_over_time(scoring_latency_seconds_count[7d])
+              ) > 0.2
+            for: 30m
+            labels:
+              severity: warning
+              team: serving
+            annotations:
+              summary: "Aesthetic score distribution has drifted"
+              description: "Mean score shifted by {{ $value | humanize }} vs 7-day baseline. Check new model behavior."

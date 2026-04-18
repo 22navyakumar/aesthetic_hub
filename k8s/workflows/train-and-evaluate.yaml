@@ -68,6 +68,14 @@ spec:
               parameters:
                 - name: run-id
                   value: "{{tasks.train.outputs.parameters.run-id}}"
+          - name: serving-quality-gate
+            template: serving-quality-gate
+            dependencies: [export-onnx]
+            when: "{{tasks.evaluate.outputs.parameters.gates-passed}} == true"
+            arguments:
+              parameters:
+                - name: run-id
+                  value: "{{tasks.train.outputs.parameters.run-id}}"
 
     - name: train-model
       outputs:
@@ -179,6 +187,7 @@ spec:
           limits:
             cpu: 500m
             memory: 512Mi
+
     - name: export-onnx
       inputs:
         parameters:
@@ -263,6 +272,40 @@ spec:
             cpu: "2"
             memory: 2Gi
 
+    - name: serving-quality-gate
+      inputs:
+        parameters:
+          - name: run-id
+      outputs:
+        parameters:
+          - name: gate-passed
+            valueFrom:
+              path: /tmp/quality-gate-passed.txt
+      container:
+        image: "somaditya24/aesthetic-scoring-service:v3"  # your image has quality_gate.py
+        command: [python, quality_gate.py]
+        args:
+          - --minio-endpoint={{workflow.parameters.minio-endpoint}}
+          - --output-result=/tmp/quality-gate-passed.txt
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: secretkey
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 2Gi
+    
     # - name: export-onnx
     #   # Converts best_ckpt.pt from MLflow into ONNX and writes to model-store-pvc
     #   # so the inference deployment can pick it up without a redeploy.

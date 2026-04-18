@@ -7,7 +7,7 @@ replicaCount: 1
 scoringService:
   image:
     repository: somaditya24/aesthetic-scoring-service
-    tag: v1
+    tag: v3
     pullPolicy: IfNotPresent
   port: 8000
   # Model URI injected by the promote-model Argo Workflow

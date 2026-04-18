@@ -31,7 +31,7 @@ spec:
       - name: observation-minutes
         value: "30"
       - name: serving-image
-        value: "somaditya24/aesthetic-scoring-service:v1"
+        value: "somaditya24/aesthetic-scoring-service:v3"
 
   templates:
     - name: serving-pipeline
@@ -65,6 +65,11 @@ spec:
                   value: "Canary"
                 - name: to-stage
                   value: "Production"
+            
+          - name: rescore-active-users
+            dependencies: [promote-canary-to-production]
+            template: run-rescore
+            when: "{{tasks.observe-canary.outputs.parameters.canary-decision}} == promote"
 
           - name: rollback-canary
             dependencies: [observe-canary]
@@ -136,3 +141,28 @@ spec:
                   value: "{{inputs.parameters.to-stage}}"
                 - name: model-name
                   value: "{{workflow.parameters.model-name}}"
+    
+    - name: run-rescore
+      container:
+        image: "somaditya24/aesthetic-scoring-service:v3"
+        command: [python, rescore.py]
+        args:
+          - --scoring-url=http://aesthetic-scoring.aesthetic-hub.svc.cluster.local:8000
+          - --active-days=30
+        env:
+          - name: POSTGRES_HOST
+            value: "immich-postgres.aesthetic-hub.svc.cluster.local"
+          - name: POSTGRES_DB
+            value: "immich"
+          - name: POSTGRES_USER
+            value: "postgres"
+          - name: POSTGRES_PASSWORD
+            value: "postgres123"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+
+# 1. user embedding onnx issue, onnx model doesnt store user embedding
+# 2. how are different model versions stored on minio, will there be a numbered 2,3,4 folder as we keep going forward and have multiple models, then how does the rollback work here
+# 3. from what i can see onnx conversion is happening here, but i particularly want graph omptimized onnx version, i can share the code with you for the same, how to do that since the saved ckpt will need to be converted to graph optimized onnx b4 being sent to staging area in minio
