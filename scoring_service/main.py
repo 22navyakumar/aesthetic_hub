@@ -8,7 +8,10 @@ from triton_client import infer_global, infer_personalized
 from db import get_user_idx
 
 # --- Prometheus metrics ---
+ENV = os.environ.get("ENVIRONMENT", "production")
+
 LATENCY = Histogram("scoring_latency_seconds", "End-to-end latency",
+                    ["environment"],
                     buckets=[.005, .01, .025, .05, .1, .25, .5])
 ALPHA_HIST = Histogram("scoring_alpha", "Alpha blending value",
                        buckets=[0, .1, .2, .3, .5, .7, .9, 1.0])
@@ -95,7 +98,7 @@ def score_single(request: ScoreRequest):
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     finally:
-        LATENCY.observe(time.time() - start)
+        LATENCY.labels(environment=ENV).observe(time.time() - start)
     return result
 
 
@@ -116,7 +119,7 @@ def score_batch(request: ScoreBatchRequest):
                 low_confidence=True
             ))
         finally:
-            LATENCY.observe(time.time() - start)
+            LATENCY.labels(environment=ENV).observe(time.time() - start)
     return results
 
 

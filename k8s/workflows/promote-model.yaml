@@ -52,6 +52,14 @@ spec:
           - name: do-rollback
             template: rollback-model
             when: "{{workflow.parameters.rollback}} == true"
+        - - name: sync-triton         
+            template: sync-triton-models
+            arguments:
+              parameters:
+                - name: from-stage
+                  value: "{{workflow.parameters.from-stage}}"
+                - name: to-stage
+                  value: "{{workflow.parameters.to-stage}}"
         - - name: sync-argocd
             template: argocd-sync
             arguments:
@@ -186,6 +194,64 @@ spec:
               secretKeyRef:
                 name: argocd-initial-admin-secret
                 key: password
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+    
+    - name: sync-triton-models
+      inputs:
+        parameters:
+          - name: from-stage   # e.g. "staging"
+          - name: to-stage     # e.g. "canary" or "production"
+      container:
+        image: ghcr.io/mlflow/mlflow:v2.13.2
+        command: [python, -c]
+        args:
+          - |
+            import boto3, os
+            from botocore.client import Config
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=os.environ["MLFLOW_S3_ENDPOINT_URL"],
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                config=Config(signature_version="s3v4"),
+                region_name="us-east-1"
+            )
+
+            bucket = "triton-models"
+            from_stage = "{{inputs.parameters.from-stage}}".lower()
+            to_stage = "{{inputs.parameters.to-stage}}".lower()
+
+            models = ["flickr_personalized"]
+            for model in models:
+                src_key = f"{from_stage}/{model}/1/model.onnx"
+                dst_key = f"{to_stage}/{model}/1/model.onnx"
+                copy_source = {"Bucket": bucket, "Key": src_key}
+                s3.copy_object(
+                    CopySource=copy_source,
+                    Bucket=bucket,
+                    Key=dst_key
+                )
+                print(f"Copied {src_key} → {dst_key}")
+
+            print(f"Triton model sync complete: {from_stage} → {to_stage}")
+            print("Triton will pick up new models within 60 seconds via poll.")
+        env:
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: secretkey
         resources:
           requests:
             cpu: 100m
