@@ -78,6 +78,20 @@
         --from-literal=secretkey={{ minio_secret_key }}
       register: minio_secret_create
 
+    - name: Replicate MinIO credentials secret to dependent namespaces
+      shell: >
+        kubectl create secret generic minio-credentials
+        --namespace {{ item }}
+        --from-literal=accesskey={{ minio_access_key }}
+        --from-literal=secretkey={{ minio_secret_key }}
+        --dry-run=client -o yaml | kubectl apply -f -
+      loop:
+        - argo
+        - aesthetic-hub
+        - aesthetic-hub-staging
+        - aesthetic-hub-canary
+        - platform
+
     - name: Check if Postgres secret already exists
       command: kubectl get secret postgres-credentials -n aes-platform
       register: postgres_secret_check
