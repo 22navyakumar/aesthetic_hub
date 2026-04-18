@@ -45,6 +45,8 @@ spec:
               value: "0.0.0.0"
             - name: MACHINE_LEARNING_URL
               value: http://immich-machine-learning:3003
+            - name: PUBLIC_IMMICH_SERVER_URL
+              value: "http://129.114.27.253:32081"
           ports:
             - containerPort: 2283
           volumeMounts:
