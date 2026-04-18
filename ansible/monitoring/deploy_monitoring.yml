@@ -170,9 +170,6 @@
     - name: Apply HPA for Immich Server
       command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-server.yaml
 
-    - name: Apply HPA for Immich Web
-      command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-web.yaml
-
     # ----------------------------------------------------------------
     # 13. Apply Argo Workflow RBAC + templates
     # ----------------------------------------------------------------
