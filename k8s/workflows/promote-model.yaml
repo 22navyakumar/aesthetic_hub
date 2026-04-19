@@ -180,7 +180,7 @@ spec:
             STAGE="{{inputs.parameters.to-stage}}"
             case "$STAGE" in
               Staging)    APP="aes-staging" ;;
-              Production) APP="aes-prod" ;;
+              Production) APP="aes-production" ;;
               *)          APP="aes-canary" ;;
             esac
             argocd login "{{workflow.parameters.argocd-server}}" \

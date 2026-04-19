@@ -25,7 +25,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--criteria-file", default="/app/promotion-criteria.yaml")
 parser.add_argument("--minio-endpoint", required=True)
 parser.add_argument("--minio-bucket", default="triton-models")
-parser.add_argument("--model-key", default="staging/flickr_personalized/1/model.onnx")
+parser.add_argument("--model-key", default="staging/personalized_mlp/1/model.onnx")
 parser.add_argument("--test-data-key", default="aesthetic-hub-data/flickr_test_embeddings.npz")
 parser.add_argument("--output-result", default="/tmp/quality-gate-passed.txt")
 args = parser.parse_args()
@@ -83,7 +83,7 @@ except Exception as e:
     sys.exit(1)
 
 # --- Download test data ---
-# This is a .npz file with keys: embeddings (N,768), user_idxs (N,), scores (N,)
+# This is a .npz file with keys: embeddings (N,768), user_embeddings (N,64), scores (N,)
 # Binti's data pipeline should have put this in MinIO during data prep
 print("Downloading test data...")
 try:
@@ -93,9 +93,9 @@ try:
         "/tmp/test_data.npz"
     )
     data = np.load("/tmp/test_data.npz")
-    embeddings = data["embeddings"].astype(np.float32)   # (N, 768)
-    user_idxs = data["user_idxs"].astype(np.int64)       # (N,)
-    gt_scores = data["scores"].astype(np.float32)         # (N,) ground truth, 0-1 scale
+    embeddings = data["embeddings"].astype(np.float32)             # (N, 768)
+    user_embeddings = data["user_embeddings"].astype(np.float32)   # (N, 64)
+    gt_scores = data["scores"].astype(np.float32)                  # (N,) ground truth, 0-1 scale
     check("test data loaded", True, f"N={len(embeddings)}")
 except Exception as e:
     check("test data loaded", False, str(e))
@@ -118,12 +118,12 @@ predictions = []
 try:
     for i in range(0, len(embeddings), BATCH_SIZE):
         batch_emb = embeddings[i:i+BATCH_SIZE]
-        batch_idx = user_idxs[i:i+BATCH_SIZE]
+        batch_user = user_embeddings[i:i+BATCH_SIZE]
         outputs = sess.run(
             ["output"],
             {
                 "image_embedding": batch_emb,
-                "user_idx": batch_idx
+                "user_embedding": batch_user
             }
         )
         predictions.extend(outputs[0].flatten().tolist())
@@ -161,13 +161,13 @@ check(
 print("Benchmarking P95 latency...")
 latencies = []
 bench_emb = embeddings[:64]
-bench_idx = user_idxs[:64]
+bench_user = user_embeddings[:64]
 
 for _ in range(100):   # 100 runs of batch=64
     start = time.perf_counter()
     sess.run(
         ["output"],
-        {"image_embedding": bench_emb, "user_idx": bench_idx}
+        {"image_embedding": bench_emb, "user_embedding": bench_user}
     )
     latencies.append((time.perf_counter() - start) * 1000)
 

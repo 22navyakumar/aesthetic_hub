@@ -93,6 +93,9 @@ spec:
       labels:
         app: triton
         track: staging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.triton.metricsPort }}"
     spec:
       containers:
         - name: triton
