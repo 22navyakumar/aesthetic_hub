@@ -26,48 +26,32 @@ spec:
           image: "{{ .Values.scoringService.image.repository }}:{{ .Values.scoringService.image.tag }}"
           imagePullPolicy: {{ .Values.scoringService.image.pullPolicy }}
           env:
-            - name: MODEL_URI
-              value: "{{ .Values.scoringService.modelUri }}"
-            - name: MLFLOW_TRACKING_URI
-              value: "{{ .Values.scoringService.mlflowTrackingUri }}"
             - name: TRITON_HOST
               value: "triton-production"
             - name: TRITON_PORT
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: production
+            - name: MODEL_VERSION
+              value: "v1"
             - name: POSTGRES_HOST
-              value: "immich-postgres.aesthetic-hub.svc.cluster.local"
+              value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
+            - name: POSTGRES_PORT
+              value: "5432"
             - name: POSTGRES_DB
-              value: "immich"
+              value: "aesthetic_hub"
             - name: POSTGRES_USER
               value: "postgres"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: immich-postgres-secret
-              #     key: username
             - name: POSTGRES_PASSWORD
               value: "postgres123"
               # valueFrom:
               #   secretKeyRef:
-              #     name: immich-postgres-secret
+              #     name: data-pipeline-postgres-secret
               #     key: password
-            - name: MINIO_ENDPOINT
-              value: "http://minio.platform.svc.cluster.local:9000"
-            - name: MINIO_BUCKET
-              value: "triton-models"
-            - name: AWS_ACCESS_KEY_ID
-              value: "minioadmin"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: minio-credentials
-              #     key: accesskey
-            - name: AWS_SECRET_ACCESS_KEY
-              value: "minioadmin"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: minio-credentials
-              #     key: secretkey
+            - name: MODEL_URI
+              value: "{{ .Values.scoringService.modelUri }}"
+            - name: MLFLOW_TRACKING_URI
+              value: "{{ .Values.scoringService.mlflowTrackingUri }}"
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
