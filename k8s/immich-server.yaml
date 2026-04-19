@@ -27,7 +27,7 @@ spec:
               mountPath: /data
       containers:
         - name: immich-server
-          image: ghcr.io/binti-p/immich/immich-server:latest
+          image: ghcr.io/binti-p/immich-server:main
           env:
             - name: DB_HOSTNAME
               value: immich-postgres
