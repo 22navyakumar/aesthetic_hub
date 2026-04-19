@@ -31,7 +31,7 @@ spec:
       - name: observation-minutes
         value: "30"
       - name: serving-image
-        value: "somaditya24/aesthetic-scoring-service:v3"
+        value: "somaditya24/aesthetic-scoring-service:v4"
 
   templates:
     - name: serving-pipeline
@@ -144,7 +144,7 @@ spec:
     
     - name: run-rescore
       container:
-        image: "somaditya24/aesthetic-scoring-service:v3"
+        image: "somaditya24/aesthetic-scoring-service:v4"
         command: [python, rescore.py]
         args:
           - --scoring-url=http://aesthetic-scoring.aesthetic-hub.svc.cluster.local:8000

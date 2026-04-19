@@ -280,7 +280,7 @@ spec:
             valueFrom:
               path: /tmp/quality-gate-passed.txt
       container:
-        image: "somaditya24/aesthetic-scoring-service:v3"  # your image has quality_gate.py
+        image: "somaditya24/aesthetic-scoring-service:v4"  # your image has quality_gate.py
         command: [python, quality_gate.py]
         args:
           - --minio-endpoint={{workflow.parameters.minio-endpoint}}
