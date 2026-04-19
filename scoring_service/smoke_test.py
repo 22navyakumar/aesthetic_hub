@@ -6,70 +6,77 @@ Exits 0 if pass, 1 if fail.
 """
 import sys
 import time
-import json
 import argparse
 import requests
 import numpy as np
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--scoring-url", required=True,
-                    help="Base URL of scoring service, e.g. http://aesthetic-scoring.aesthetic-hub-staging.svc.cluster.local:8000")
+parser.add_argument("--scoring-url", required=True)
 parser.add_argument("--output-result", default="/tmp/smoke-passed.txt")
 args = parser.parse_args()
 
 BASE_URL = args.scoring_url.rstrip("/")
-LATENCY_THRESHOLD_MS = 500   # generous for smoke test
 RESULTS = []
+
 
 def check(name, passed, detail=""):
     status = "PASS" if passed else "FAIL"
     print(f"[{status}] {name}: {detail}")
     RESULTS.append(passed)
 
-# --- Test 1: Health check ---
+
+def make_request(asset_id="smoke-asset-001", cold_start=False):
+    """Build a valid ScoreRequest matching feature-svc output format."""
+    return {
+        "request_id": f"smoke-{asset_id}-{int(time.time())}",
+        "asset_id": "00000000-0000-0000-0000-000000000001",
+        "user_id": "00000000-0000-0000-0000-000000000099",
+        "clip_embedding": np.random.randn(768).astype(np.float32).tolist(),
+        "user_embedding": None if cold_start else np.random.randn(64).astype(np.float32).tolist(),
+        "alpha": 0.0 if cold_start else 0.42,
+        "is_cold_start": cold_start,
+        "model_version": "smoke-test",
+        "source": "smoke_test"
+    }
+
+
+# --- Test 1: Health ---
 try:
     r = requests.get(f"{BASE_URL}/health", timeout=5)
     check("health endpoint", r.status_code == 200, f"status={r.status_code}")
 except Exception as e:
     check("health endpoint", False, str(e))
 
-# --- Test 2: New user (alpha=0, global model only) ---
-embedding = np.random.randn(768).astype(np.float32).tolist()
-payload = {
-    "image_id": "smoke-test-001",
-    "embedding": embedding,
-    "user_id": "smoke-test-new-user-xyz"
-}
+# --- Test 2: Cold start (global model only, alpha=0) ---
 try:
     start = time.time()
-    r = requests.post(f"{BASE_URL}/score", json=payload, timeout=10)
+    r = requests.post(f"{BASE_URL}/score", json=make_request(cold_start=True), timeout=10)
     latency_ms = (time.time() - start) * 1000
-
-    check("score returns 200", r.status_code == 200, f"status={r.status_code}")
+    check("cold start returns 200", r.status_code == 200, f"status={r.status_code}")
     if r.status_code == 200:
         body = r.json()
-        check("score is float in [0,1]", 0.0 <= body["score"] <= 1.0,
-              f"score={body['score']}")
-        check("alpha is 0 for new user", body["alpha"] == 0.0,
-              f"alpha={body['alpha']}")
-        check("personalized_score is null for new user",
-              body["personalized_score"] is None,
-              f"personalized_score={body['personalized_score']}")
-        check("latency under threshold", latency_ms < LATENCY_THRESHOLD_MS,
-              f"{latency_ms:.1f}ms")
+        check("score in [0,1]", 0.0 <= body["score"] <= 1.0, f"score={body['score']}")
+        check("alpha is 0 for cold start", body["alpha"] == 0.0, f"alpha={body['alpha']}")
+        check("personalized_score is null for cold start",
+              body["personalized_score"] is None)
+        check("latency < 500ms", latency_ms < 500, f"{latency_ms:.1f}ms")
 except Exception as e:
-    check("score endpoint", False, str(e))
+    check("cold start score", False, str(e))
 
-# --- Test 3: Batch endpoint ---
+# --- Test 3: Warm user (personalized model called) ---
+try:
+    r = requests.post(f"{BASE_URL}/score", json=make_request(cold_start=False), timeout=10)
+    check("warm user returns 200", r.status_code == 200, f"status={r.status_code}")
+    if r.status_code == 200:
+        body = r.json()
+        check("score in [0,1]", 0.0 <= body["score"] <= 1.0, f"score={body['score']}")
+        check("alpha > 0 for warm user", body["alpha"] > 0.0, f"alpha={body['alpha']}")
+except Exception as e:
+    check("warm user score", False, str(e))
+
+# --- Test 4: Batch endpoint ---
 batch_payload = {
-    "items": [
-        {
-            "image_id": f"smoke-batch-{i}",
-            "embedding": np.random.randn(768).astype(np.float32).tolist(),
-            "user_id": "smoke-test-new-user-xyz"
-        }
-        for i in range(5)
-    ]
+    "items": [make_request(cold_start=(i % 2 == 0)) for i in range(5)]
 }
 try:
     r = requests.post(f"{BASE_URL}/score/batch", json=batch_payload, timeout=15)
@@ -77,25 +84,20 @@ try:
     if r.status_code == 200:
         items = r.json()
         check("batch returns 5 items", len(items) == 5, f"got {len(items)}")
-        all_valid = all(0.0 <= item["score"] <= 1.0 for item in items)
-        check("all batch scores in range", all_valid)
+        check("all scores in [0,1]", all(0.0 <= i["score"] <= 1.0 for i in items))
 except Exception as e:
     check("batch endpoint", False, str(e))
 
-# --- Test 4: Bad embedding rejected ---
-bad_payload = {
-    "image_id": "smoke-bad",
-    "embedding": [0.1] * 512,   # wrong dim
-    "user_id": "smoke-test-new-user-xyz"
-}
+# --- Test 5: Bad embedding rejected ---
+bad = make_request()
+bad["clip_embedding"] = [0.1] * 512  # wrong dim
 try:
-    r = requests.post(f"{BASE_URL}/score", json=bad_payload, timeout=5)
-    check("bad embedding returns 422", r.status_code == 422,
-          f"status={r.status_code}")
+    r = requests.post(f"{BASE_URL}/score", json=bad, timeout=5)
+    check("bad embedding returns 422", r.status_code == 422, f"status={r.status_code}")
 except Exception as e:
     check("bad embedding rejection", False, str(e))
 
-# --- Write result ---
+# --- Result ---
 all_passed = all(RESULTS)
 with open(args.output_result, "w") as f:
     f.write("true" if all_passed else "false")

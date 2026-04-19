@@ -12,20 +12,30 @@ import db
 ENV = os.environ.get("ENVIRONMENT", "production")
 MODEL_VERSION = os.environ.get("MODEL_VERSION", "unknown")
 
+# --- Prometheus metrics ---
 LATENCY = Histogram(
-    "scoring_latency_seconds", "End-to-end latency",
+    "scoring_latency_seconds", "End-to-end scoring latency",
     ["environment"],
     buckets=[.005, .01, .025, .05, .1, .25, .5]
 )
-ALPHA_HIST = Histogram("scoring_alpha", "Alpha value",
-                       buckets=[0, .1, .2, .3, .5, .7, .9, 1.0])
-SCORE_HIST = Histogram("scoring_final_score", "Score distribution",
-                       buckets=[i/10 for i in range(11)])
-ERRORS = Counter("scoring_errors_total", "Errors", ["reason"])
-LOW_CONF = Counter("scoring_low_confidence_total", "Low-confidence flags")
+ALPHA_HIST = Histogram(
+    "scoring_alpha", "Alpha blending value",
+    buckets=[0, .1, .2, .3, .5, .7, .9, 1.0]
+)
+SCORE_HIST = Histogram(
+    "scoring_final_score", "Final score distribution",
+    buckets=[i/10 for i in range(11)]
+)
+ERRORS = Counter(
+    "scoring_errors_total", "Scoring errors",
+    ["reason"]
+)
+LOW_CONF = Counter(
+    "scoring_low_confidence_total", "Low-confidence score flags"
+)
 
 LOW_CONF_THRESHOLD = 0.15
-DIVERGENCE_THRESHOLD = 0.4
+DIVERGENCE_THRESHOLD = 0.40
 
 
 @asynccontextmanager
@@ -39,30 +49,35 @@ app.mount("/metrics", make_asgi_app())
 
 
 def _score(request: ScoreRequest) -> ScoreResponse:
-    request_received_at = time.time()
-
     clip_emb = np.array(request.clip_embedding, dtype=np.float32)
+
     if len(clip_emb) != 768:
-        ERRORS.labels(reason="bad_embedding").inc()
+        ERRORS.labels(reason="bad_clip_embedding").inc()
         raise ValueError(f"Expected 768-dim clip_embedding, got {len(clip_emb)}")
 
     # --- Global model (always called) ---
     try:
         g_score = infer_global(clip_emb)
-    except Exception:
+    except Exception as e:
         ERRORS.labels(reason="triton_global_failed").inc()
         raise HTTPException(status_code=503, detail="Global model unavailable")
 
     # --- Personalized model ---
+    # Only called if: not cold start AND user_embedding is present AND alpha > 0
     p_score = None
-    if not request.is_cold_start and request.user_embedding is not None and request.alpha > 0:
+    if (
+        not request.is_cold_start
+        and request.user_embedding is not None
+        and request.alpha > 0
+    ):
         user_emb = np.array(request.user_embedding, dtype=np.float32)
         if len(user_emb) != 64:
             ERRORS.labels(reason="bad_user_embedding").inc()
         else:
             try:
                 p_score = infer_personalized(clip_emb, user_emb)
-            except Exception:
+            except Exception as e:
+                # Graceful degradation — fall back to global only
                 ERRORS.labels(reason="triton_personalized_failed").inc()
 
     # --- Blend using pre-computed alpha from feature-svc ---
@@ -80,21 +95,7 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         divergence > DIVERGENCE_THRESHOLD
     )
 
-    computed_at = time.time()
-
-    # --- Write to inference_log ---
-    db.write_inference_log(
-        request_id=request.request_id,
-        asset_id=request.asset_id,
-        user_id=request.user_id,
-        alpha=alpha,
-        model_version=request.model_version or MODEL_VERSION,
-        is_cold_start=request.is_cold_start,
-        request_received_at=request_received_at,
-        computed_at=computed_at
-    )
-
-    # --- Upsert aesthetic_scores ---
+    # --- Write score to Postgres ---
     db.upsert_aesthetic_score(
         asset_id=request.asset_id,
         user_id=request.user_id,
@@ -102,7 +103,8 @@ def _score(request: ScoreRequest) -> ScoreResponse:
         alpha=alpha,
         model_version=request.model_version or MODEL_VERSION,
         is_cold_start=request.is_cold_start,
-        request_id=request.request_id
+        request_id=request.request_id,
+        source=request.source or "scoring-service"
     )
 
     ALPHA_HIST.observe(alpha)
@@ -144,7 +146,7 @@ def score_batch(request: ScoreBatchRequest):
         start = time.time()
         try:
             results.append(_score(item))
-        except Exception:
+        except HTTPException:
             results.append(ScoreResponse(
                 asset_id=item.asset_id,
                 user_id=item.user_id,
@@ -162,4 +164,8 @@ def score_batch(request: ScoreBatchRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "environment": ENV, "model_version": MODEL_VERSION}
+    return {
+        "status": "ok",
+        "environment": ENV,
+        "model_version": MODEL_VERSION
+    }
