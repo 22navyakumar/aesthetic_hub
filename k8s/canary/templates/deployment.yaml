@@ -36,10 +36,14 @@ spec:
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: canary
+            - name: MODEL_VERSION
+              value: "v1"
             - name: POSTGRES_HOST
-              value: "immich-postgres.aesthetic-hub.svc.cluster.local"
+              value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
+            - name: POSTGRES_PORT
+              value: "5432"
             - name: POSTGRES_DB
-              value: "immich"
+              value: "aesthetic_hub"
             - name: POSTGRES_USER
               value: "postgres"
               # valueFrom:
