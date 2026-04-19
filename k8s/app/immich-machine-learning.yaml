@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: immich-machine-learning
-          image: ghcr.io/binti-p/immich/immich-machine-learning:latest
+          image: ghcr.io/binti-p/immich-machine-learning:main
           ports:
             - containerPort: 3003
               name: http
