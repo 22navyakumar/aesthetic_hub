@@ -117,6 +117,8 @@ spec:
                   key: secretkey
             - name: TRITON_AWS_ENDPOINT
               value: "http://minio.platform.svc.cluster.local:9000"
+            - name: AWS_ENDPOINT_URL
+              value: "http://minio.platform.svc.cluster.local:9000"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http
