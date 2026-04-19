@@ -42,3 +42,18 @@ data "openstack_networking_secgroup_v2" "immich_nodeport" {
   name = "immich-nodeport-proj21"
 }
 
+resource "openstack_networking_secgroup_v2" "adminer_nodeport" {
+  name        = "adminer-nodeport-${var.suffix}"
+  description = "Allow access to Adminer on NodePort 32082"
+}
+
+resource "openstack_networking_secgroup_rule_v2" "adminer_nodeport_rule" {
+  direction         = "ingress"
+  ethertype         = "IPv4"
+  protocol          = "tcp"
+  port_range_min    = 32082
+  port_range_max    = 32082
+  remote_ip_prefix  = "0.0.0.0/0"
+  security_group_id = openstack_networking_secgroup_v2.adminer_nodeport.id
+}
+
