@@ -5,10 +5,10 @@ replicaCount: 1
 
 scoringService:
   image:
-    repository: localhost:5000/aesthetic-scoring
-    tag: stable
-    pullPolicy: IfNotPresent
-  port: 8080
+    repository: ghcr.io/22navyakumar/aesthetic-scoring-service
+    tag: latest
+    pullPolicy: Always
+  port: 8000
   modelUri: "models:/aesthetic-scorer/production"
   mlflowTrackingUri: "http://mlflow.platform.svc.cluster.local:5000"
 
