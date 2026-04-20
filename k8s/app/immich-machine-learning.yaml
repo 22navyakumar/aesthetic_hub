@@ -2,15 +2,14 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: immich-model-cache-pvc
+  name: immich-ml-cache-pvc
   namespace: aesthetic-hub
 spec:
-  storageClassName: local-path
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 10Gi
+      storage: 20Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -29,6 +28,7 @@ spec:
       labels:
         app: immich-machine-learning
     spec:
+      dnsPolicy: Default
       containers:
         - name: immich-machine-learning
           image: ghcr.io/binti-p/immich-machine-learning:main
@@ -63,7 +63,7 @@ spec:
       volumes:
         - name: model-cache
           persistentVolumeClaim:
-            claimName: immich-model-cache-pvc
+            claimName: immich-ml-cache-pvc
 ---
 apiVersion: v1
 kind: Service
