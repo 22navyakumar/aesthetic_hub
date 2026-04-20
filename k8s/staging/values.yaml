@@ -19,7 +19,7 @@ triton:
     tag: "24.10-py3"
   port: 8000
   metricsPort: 8002
-  modelRepository: "s3://triton-models/staging"
+  modelRepository: "s3://http://minio.platform.svc.cluster.local:9000/triton-models/staging"
   resources:
     requests:
       cpu: 500m

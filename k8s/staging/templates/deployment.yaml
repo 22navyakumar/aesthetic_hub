@@ -111,8 +111,12 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
-            - name: TRITON_AWS_ENDPOINT
-              value: "http://minio.platform.svc.cluster.local:9000"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: S3_USE_HTTPS
+              value: "0"
+            - name: S3_VERIFY_SSL
+              value: "0"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http
