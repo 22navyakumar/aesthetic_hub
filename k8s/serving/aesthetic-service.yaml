@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aesthetic-service
+  namespace: aesthetic-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aesthetic-service
+  template:
+    metadata:
+      labels:
+        app: aesthetic-service
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: aesthetic-service
+          image: ghcr.io/binti-p/aesthetic-service:main
+          env:
+            - name: POSTGRES_HOST
+              value: immich-postgres
+            - name: POSTGRES_DB
+              value: immich
+            - name: POSTGRES_USER
+              value: immich
+            - name: POSTGRES_PASSWORD
+              value: immich
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: AWS_ACCESS_KEY_ID
+              value: minioadmin
+            - name: AWS_SECRET_ACCESS_KEY
+              value: minioadmin
+            - name: AWS_ENDPOINT_URL
+              value: http://minio.platform.svc.cluster.local:9000
+            - name: AWS_REGION
+              value: us-east-1
+            - name: MINIO_BUCKET
+              value: aesthetic-hub-data
+            - name: IMMICH_SERVER_URL
+              value: http://immich-server:2283
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aesthetic-service
+  namespace: aesthetic-hub
+spec:
+  selector:
+    app: aesthetic-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP

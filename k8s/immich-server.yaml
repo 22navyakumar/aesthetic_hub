@@ -25,6 +25,8 @@ spec:
           volumeMounts:
             - name: immich-upload-storage
               mountPath: /data
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       containers:
         - name: immich-server
           image: ghcr.io/binti-p/immich-server:main
@@ -47,8 +49,26 @@ spec:
               value: http://immich-machine-learning:3003
             - name: PUBLIC_IMMICH_SERVER_URL
               value: "http://129.114.27.253:32081"
+            - name: ENABLE_AESTHETIC_SCORING
+              value: "true"
+            - name: FEATURE_SERVICE_URL
+              value: http://scoring-service:8000
+            - name: AESTHETIC_SERVICE_URL
+              value: http://aesthetic-service:8000
           ports:
             - containerPort: 2283
+          readinessProbe:
+            httpGet:
+              path: /api/server/ping
+              port: 2283
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/server/ping
+              port: 2283
+            initialDelaySeconds: 60
+            periodSeconds: 30
           volumeMounts:
             - name: immich-upload-storage
               mountPath: /data

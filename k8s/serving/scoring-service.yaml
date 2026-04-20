@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scoring-service
+  namespace: aesthetic-hub
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scoring-service
+  template:
+    metadata:
+      labels:
+        app: scoring-service
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: scoring-service
+          image: ghcr.io/binti-p/scoring-service:main
+          env:
+            - name: POSTGRES_HOST
+              value: immich-postgres
+            - name: POSTGRES_DB
+              value: immich
+            - name: POSTGRES_USER
+              value: immich
+            - name: POSTGRES_PASSWORD
+              value: immich
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: TRITON_HOST
+              value: triton-production
+            - name: TRITON_PORT
+              value: "8000"
+            - name: IMMICH_SERVER_URL
+              value: http://immich-server:2283
+            - name: AESTHETIC_SERVICE_URL
+              value: http://aesthetic-service:8000
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          volumeMounts:
+            - name: immich-upload-storage
+              mountPath: /data
+              readOnly: true
+      volumes:
+        - name: immich-upload-storage
+          persistentVolumeClaim:
+            claimName: immich-upload-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scoring-service
+  namespace: aesthetic-hub
+spec:
+  selector:
+    app: scoring-service
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
