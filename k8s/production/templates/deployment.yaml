@@ -21,19 +21,23 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ .Values.scoringService.port }}"
     spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
       containers:
         - name: scoring-service
           image: "{{ .Values.scoringService.image.repository }}:{{ .Values.scoringService.image.tag }}"
           imagePullPolicy: {{ .Values.scoringService.image.pullPolicy }}
           env:
+            - name: MODEL_URI
+              value: "{{ .Values.scoringService.modelUri }}"
+            - name: MLFLOW_TRACKING_URI
+              value: "{{ .Values.scoringService.mlflowTrackingUri }}"
             - name: TRITON_HOST
               value: "triton-production"
             - name: TRITON_PORT
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: production
-            - name: MODEL_VERSION
-              value: "v1"
             - name: POSTGRES_HOST
               value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
             - name: POSTGRES_PORT
@@ -41,17 +45,12 @@ spec:
             - name: POSTGRES_DB
               value: "aesthetic_hub"
             - name: POSTGRES_USER
-              value: "postgres"
+              value: "aesthetic"
             - name: POSTGRES_PASSWORD
-              value: "postgres123"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: data-pipeline-postgres-secret
-              #     key: password
-            - name: MODEL_URI
-              value: "{{ .Values.scoringService.modelUri }}"
-            - name: MLFLOW_TRACKING_URI
-              value: "{{ .Values.scoringService.mlflowTrackingUri }}"
+              valueFrom:
+                secretKeyRef:
+                  name: data-pipeline-postgres-secret
+                  key: password
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
@@ -109,6 +108,7 @@ spec:
             - --repository-poll-secs=60
             - --allow-metrics=true
             - --metrics-port={{ .Values.triton.metricsPort }}
+            - --exit-on-error=false
           env:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
@@ -120,10 +120,12 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
-            - name: TRITON_AWS_ENDPOINT
-              value: "http://minio.platform.svc.cluster.local:9000"
-            - name: AWS_ENDPOINT_URL
-              value: "http://minio.platform.svc.cluster.local:9000"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: S3_USE_HTTPS
+              value: "0"
+            - name: S3_VERIFY_SSL
+              value: "0"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http

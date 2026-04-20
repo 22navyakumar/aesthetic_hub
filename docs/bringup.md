@@ -20,5 +20,9 @@
    - kubectl apply -f k8s/app/redis.yaml
    - kubectl apply -f k8s/app/immich-server.yaml
    - kubectl apply -f k8s/app/immich-web.yaml
+   - kubectl apply -f k8s/app/adminer.yaml
 10. Validate services with kubectl and browser access.
+    - Adminer UI available at http://<node-ip>:32082
+    - To inspect Immich DB: server=immich-postgres, user=immich, password=immich, database=immich
+    - To inspect MLflow DB: server=mlflow-postgres.platform, user/password from mlflow-postgres-credentials secret
       

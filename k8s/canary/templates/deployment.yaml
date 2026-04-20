@@ -36,8 +36,6 @@ spec:
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: canary
-            - name: MODEL_VERSION
-              value: "v1"
             - name: POSTGRES_HOST
               value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
             - name: POSTGRES_PORT
@@ -45,17 +43,12 @@ spec:
             - name: POSTGRES_DB
               value: "aesthetic_hub"
             - name: POSTGRES_USER
-              value: "postgres"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: immich-postgres-secret
-              #     key: username
+              value: "aesthetic"
             - name: POSTGRES_PASSWORD
-              value: "postgres123"
-              # valueFrom:
-              #   secretKeyRef:
-              #     name: immich-postgres-secret
-              #     key: password
+              valueFrom:
+                secretKeyRef:
+                  name: data-pipeline-postgres-secret
+                  key: password
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
@@ -124,10 +117,12 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
-            - name: TRITON_AWS_ENDPOINT
-              value: "http://minio.platform.svc.cluster.local:9000"
-            - name: AWS_ENDPOINT_URL
-              value: "http://minio.platform.svc.cluster.local:9000"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
+            - name: S3_USE_HTTPS
+              value: "0"
+            - name: S3_VERIFY_SSL
+              value: "0"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http
