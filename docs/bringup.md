@@ -16,6 +16,10 @@
    - kubectl apply -f k8s/platform/minio-service.yaml
 9. Deploy open-source service:
    - kubectl apply -f k8s/app/namespace.yaml
+   - Create GHCR pull secret (required for binti-p fork images):
+     ```
+     ansible-playbook ansible/argocd/create_ghcr_secret.yml -e "ghcr_pat=<PAT_WITH_read:packages>"
+     ```
    - kubectl apply -f k8s/app/postgres.yaml
    - kubectl apply -f k8s/app/redis.yaml
    - kubectl apply -f k8s/app/immich-server.yaml

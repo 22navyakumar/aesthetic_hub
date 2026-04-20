@@ -29,6 +29,8 @@ spec:
       labels:
         app: immich-machine-learning
     spec:
+      imagePullSecrets:
+        - name: ghcr-creds
       containers:
         - name: immich-machine-learning
           image: ghcr.io/binti-p/immich-machine-learning:main
