@@ -45,9 +45,12 @@ spec:
             - name: POSTGRES_DB
               value: "aesthetic_hub"
             - name: POSTGRES_USER
-              value: "postgres"
+              value: "aesthetic"
             - name: POSTGRES_PASSWORD
-              value: "postgres123"
+              valueFrom:
+                secretKeyRef:
+                  name: data-pipeline-postgres-secret
+                  key: password
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
