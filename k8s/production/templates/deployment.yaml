@@ -21,6 +21,8 @@ spec:
         prometheus.io/scrape: "true"
         prometheus.io/port: "{{ .Values.scoringService.port }}"
     spec:
+      imagePullSecrets:
+        - name: ghcr-credentials
       containers:
         - name: scoring-service
           image: "{{ .Values.scoringService.image.repository }}:{{ .Values.scoringService.image.tag }}"
@@ -103,6 +105,7 @@ spec:
             - --repository-poll-secs=60
             - --allow-metrics=true
             - --metrics-port={{ .Values.triton.metricsPort }}
+            - --exit-on-error=false
           env:
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
