@@ -12,11 +12,12 @@ spec:
       storage: 5Gi
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: immich-postgres
   namespace: aesthetic-hub
 spec:
+  serviceName: immich-postgres
   replicas: 1
   selector:
     matchLabels:
@@ -35,9 +36,26 @@ spec:
             - name: POSTGRES_USER
               value: immich
             - name: POSTGRES_PASSWORD
-              value: immich
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres-secret
+                  key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           ports:
             - containerPort: 5432
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+            limits:
+              cpu: 1000m
+              memory: 4Gi
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "immich"]
+            initialDelaySeconds: 30
+            periodSeconds: 15
           volumeMounts:
             - name: storage
               mountPath: /var/lib/postgresql/data

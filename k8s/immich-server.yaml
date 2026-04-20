@@ -3,6 +3,8 @@ kind: Deployment
 metadata:
   name: immich-server
   namespace: aesthetic-hub
+  labels:
+    app: immich-server
 spec:
   replicas: 1
   selector:
@@ -27,29 +29,77 @@ spec:
               mountPath: /data
       containers:
         - name: immich-server
-          image: ghcr.io/binti-p/immich/immich-server:latest
+          image: ghcr.io/binti-p/immich-server:main
           env:
             - name: DB_HOSTNAME
               value: immich-postgres
             - name: DB_USERNAME
               value: immich
             - name: DB_PASSWORD
-              value: immich
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres-secret
+                  key: password
             - name: DB_DATABASE_NAME
               value: immich
+            - name: DB_PORT
+              value: "5432"
+            - name: DATA_PIPELINE_DB_HOST
+              value: data-pipeline-postgres
+            - name: DATA_PIPELINE_DB_PORT
+              value: "5432"
+            - name: DATA_PIPELINE_DB_NAME
+              value: aesthetic_hub
+            - name: DATA_PIPELINE_DB_USER
+              value: immich_readonly
+            - name: DATA_PIPELINE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: data-pipeline-postgres-secret
+                  key: immich_readonly_password
+            - name: FEATURE_SERVICE_URL
+              value: http://feature-svc.aesthetic-hub.svc.cluster.local:8001
+            - name: ENABLE_AESTHETIC_SCORING
+              value: "true"
             - name: REDIS_HOSTNAME
               value: immich-redis
+            - name: REDIS_PORT
+              value: "6379"
             - name: UPLOAD_LOCATION
               value: /data
             - name: IMMICH_HOST
               value: "0.0.0.0"
-            - name: MACHINE_LEARNING_URL
-              value: http://immich-machine-learning:3003
+            - name: IMMICH_PORT
+              value: "2283"
+            - name: IMMICH_LOG_LEVEL
+              value: "log"
+            - name: IMMICH_LOG_FORMAT
+              value: "json"
           ports:
             - containerPort: 2283
+              name: http
           volumeMounts:
             - name: immich-upload-storage
               mountPath: /data
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+          livenessProbe:
+            httpGet:
+              path: /api/server-info/ping
+              port: 2283
+            initialDelaySeconds: 30
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/server-info/ping
+              port: 2283
+            initialDelaySeconds: 10
+            periodSeconds: 10
       volumes:
         - name: immich-upload-storage
           persistentVolumeClaim:
@@ -61,10 +111,10 @@ metadata:
   name: immich-server
   namespace: aesthetic-hub
 spec:
+  type: NodePort
   selector:
     app: immich-server
   ports:
     - port: 2283
       targetPort: 2283
       nodePort: 32081
-  type: NodePort

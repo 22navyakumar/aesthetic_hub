@@ -3,10 +3,13 @@ kind: PersistentVolumeClaim
 metadata:
   name: immich-upload-pvc
   namespace: aesthetic-hub
+  labels:
+    app: immich
+    component: storage
 spec:
   accessModes:
-    - ReadWriteOnce
+    - ReadWriteMany
   resources:
     requests:
-      storage: 10Gi
+      storage: 50Gi
   storageClassName: local-path
