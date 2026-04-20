@@ -36,6 +36,16 @@ spec:
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: canary
+            - name: POSTGRES_HOST
+              value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "aesthetic_hub"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres123"
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http

@@ -36,6 +36,16 @@ spec:
               value: "{{ .Values.triton.port }}"
             - name: ENVIRONMENT
               value: staging
+            - name: POSTGRES_HOST
+              value: "data-pipeline-postgres.aesthetic-hub.svc.cluster.local"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "aesthetic_hub"
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres123"
           ports:
             - containerPort: {{ .Values.scoringService.port }}
               name: http
@@ -52,6 +62,12 @@ spec:
               port: {{ .Values.scoringService.port }}
             initialDelaySeconds: 10
             periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.scoringService.port }}
+            initialDelaySeconds: 30
+            periodSeconds: 30
 {{- if .Values.triton.enabled }}
 ---
 apiVersion: apps/v1

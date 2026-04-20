@@ -6,10 +6,10 @@ replicaCount: 1
 
 scoringService:
   image:
-    repository: localhost:5000/aesthetic-scoring
+    repository: ghcr.io/22navyakumar/aesthetic-scoring-service
     tag: latest
     pullPolicy: Always
-  port: 8080
+  port: 8000
   # Model URI injected by the promote-model Argo Workflow
   modelUri: "models:/aesthetic-scorer/staging"
   mlflowTrackingUri: "http://mlflow.platform.svc.cluster.local:5000"
