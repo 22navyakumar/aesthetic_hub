@@ -2,10 +2,23 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: bucket-init
-  namespace: aesthetic-hub
+  namespace: platform
 spec:
   template:
     spec:
+      initContainers:
+        - name: wait-for-minio
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MinIO to be ready..."
+              until wget -q --spider http://minio.platform.svc.cluster.local:9000/minio/health/ready; do
+                echo "MinIO not ready yet, waiting 5s..."
+                sleep 5
+              done
+              echo "MinIO is ready!"
       containers:
         - name: bucket-init
           image: python:3.11-slim
@@ -16,15 +29,9 @@ spec:
               python3 /scripts/bucket_init.py
           env:
             - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: accesskey
+              value: minioadmin
             - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: secretkey
+              value: minioadmin
           volumeMounts:
             - name: scripts
               mountPath: /scripts

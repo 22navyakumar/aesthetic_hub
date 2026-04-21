@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: bucket-init-script
-  namespace: aesthetic-hub
+  namespace: platform
 data:
   bucket_init.py: |
     """
