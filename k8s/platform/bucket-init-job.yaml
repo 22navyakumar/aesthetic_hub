@@ -2,27 +2,48 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: bucket-init
-  namespace: aesthetic-hub
+  namespace: platform
 spec:
   template:
     spec:
+      initContainers:
+        - name: wait-for-minio
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for MinIO to be ready..."
+              until wget -q --spider http://minio.platform.svc.cluster.local:9000/minio/health/ready; do
+                echo "MinIO not ready yet, waiting 5s..."
+                sleep 5
+              done
+              echo "MinIO is ready!"
       containers:
-        - name: mc
-          image: minio/mc
+        - name: bucket-init
+          image: python:3.11-slim
           command: ["sh", "-c"]
           args:
             - |
-              mc alias set myminio http://minio.platform.svc.cluster.local:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-              mc mb --ignore-existing myminio/aesthetic-hub-data
+              pip install --quiet minio pyarrow &&
+              python3 /scripts/bucket_init.py
           env:
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: accesskey
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: secretkey
+            - name: MINIO_ROOT_USER
+              value: minioadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: minioadmin
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+            - name: model-files
+              mountPath: /models
+              readOnly: true
+      volumes:
+        - name: scripts
+          configMap:
+            name: bucket-init-script
+        - name: model-files
+          hostPath:
+            path: /root/aesthetic_hub/k8s/models
+            type: Directory
       restartPolicy: OnFailure

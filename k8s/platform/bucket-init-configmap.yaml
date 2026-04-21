@@ -1,0 +1,225 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bucket-init-script
+  namespace: platform
+data:
+  bucket_init.py: |
+    """
+    MinIO bucket initialization for aesthetic-hub.
+    Creates buckets and uploads initial Triton models from local files.
+    """
+    import json
+    import logging
+    import os
+    import sys
+    from datetime import datetime, timezone
+    from io import BytesIO
+    from pathlib import Path
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from minio import Minio
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    log = logging.getLogger(__name__)
+
+    # Local model files (mounted from ConfigMap/hostPath)
+    TRITON_MODELS_BASE = Path("/models/triton")
+    BOOTSTRAP_PTH_PATH = Path("/models/bootstrap_personalized_model.pth")
+
+    # MinIO config
+    MINIO_HOST = "minio.platform.svc.cluster.local:9000"
+    MINIO_USER = os.environ.get("MINIO_ROOT_USER", "minioadmin")
+    MINIO_PASSWORD = os.environ.get("MINIO_ROOT_PASSWORD", "minioadmin")
+    BUCKET_DATA = "aesthetic-hub-data"
+    BUCKET_TRITON = "triton-models"
+
+    # Bootstrap version
+    BOOTSTRAP_VERSION = "v0000-00-00"
+
+
+    def get_minio_client() -> Minio:
+        return Minio(MINIO_HOST, access_key=MINIO_USER, secret_key=MINIO_PASSWORD, secure=False)
+
+
+    def create_bucket(client: Minio):
+        """Create buckets if they don't exist."""
+        for bucket in [BUCKET_DATA, BUCKET_TRITON]:
+            if not client.bucket_exists(bucket):
+                client.make_bucket(bucket)
+                log.info(f"✓ Created bucket: {bucket}")
+            else:
+                log.info(f"✓ Bucket already exists: {bucket}")
+
+
+    def upload_triton_models(client: Minio):
+        """Upload Triton models from local files to MinIO."""
+        log.info("\nUploading Triton models from local files...")
+        
+        if not TRITON_MODELS_BASE.exists():
+            log.error(f"Triton models directory not found: {TRITON_MODELS_BASE}")
+            return
+        
+        environments = ["canary", "staging", "production"]
+        model_configs = [
+            ("global_mlp", "1/model.onnx"),
+            ("global_mlp", "config.pbtxt"),
+            ("personalized_mlp", "1/model.onnx"),
+            ("personalized_mlp", "config.pbtxt"),
+        ]
+        
+        for env in environments:
+            for model_type, file_path in model_configs:
+                local_path = TRITON_MODELS_BASE / model_type / file_path
+                minio_path = f"{env}/{model_type}/{file_path}"
+                
+                try:
+                    if not local_path.exists():
+                        log.warning(f"  ✗ Local file not found: {local_path}")
+                        continue
+                    
+                    log.info(f"  Uploading {local_path} → {minio_path}")
+                    
+                    with open(local_path, "rb") as f:
+                        data = f.read()
+                    
+                    # Upload to MinIO
+                    client.put_object(
+                        BUCKET_TRITON,
+                        minio_path,
+                        BytesIO(data),
+                        len(data)
+                    )
+                    log.info(f"  ✓ Uploaded {minio_path}")
+                    
+                except Exception as e:
+                    log.warning(f"  ✗ Failed to upload {local_path}: {e}")
+        
+        log.info("✓ Triton models upload complete")
+
+
+    def upload_pytorch_model(client: Minio, version: str):
+        """Upload bootstrap PyTorch model from local file to MinIO."""
+        log.info(f"\nUploading PyTorch model to models/{version}/...")
+        
+        if not BOOTSTRAP_PTH_PATH.exists():
+            log.error(f"Bootstrap model not found: {BOOTSTRAP_PTH_PATH}")
+            return
+        
+        try:
+            log.info(f"  Uploading {BOOTSTRAP_PTH_PATH}")
+            
+            with open(BOOTSTRAP_PTH_PATH, "rb") as f:
+                data = f.read()
+            
+            minio_path = f"models/{version}/best_personalized_model.pth"
+            client.put_object(
+                BUCKET_DATA,
+                minio_path,
+                BytesIO(data),
+                len(data)
+            )
+            log.info(f"  ✓ Uploaded {minio_path}")
+            
+        except Exception as e:
+            log.warning(f"  ✗ Failed to upload PyTorch model: {e}")
+        
+        log.info("✓ PyTorch model upload complete")
+
+
+    def create_directory_structure(client: Minio):
+        """Create placeholder files for directory structure."""
+        log.info("\nCreating directory structure...")
+        
+        placeholder = json.dumps({"placeholder": True}).encode()
+        directories = [
+            "production-sim/interactions/.placeholder",
+            "production-sim/inference-log/.placeholder",
+            f"models/{BOOTSTRAP_VERSION}/.placeholder",
+            f"datasets/{BOOTSTRAP_VERSION}/.placeholder"
+        ]
+        
+        for path in directories:
+            client.put_object(BUCKET_DATA, path, BytesIO(placeholder), len(placeholder))
+        
+        log.info("✓ Created directory structure")
+
+
+    def create_bootstrap_data(client: Minio, version: str):
+        """Create bootstrap metadata files."""
+        log.info(f"\nCreating bootstrap data for {version}...")
+        
+        # Bootstrap model_card.json
+        model_card = {
+            "version": version,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "model_type": "personalized_mlp",
+            "status": "bootstrap"
+        }
+        
+        model_card_key = f"models/{version}/model_card.json"
+        client.put_object(
+            BUCKET_DATA,
+            model_card_key,
+            BytesIO(json.dumps(model_card, indent=2).encode()),
+            len(json.dumps(model_card, indent=2).encode()),
+            content_type="application/json",
+        )
+        log.info(f"  ✓ Created {model_card_key}")
+        
+        # Bootstrap user_embeddings.parquet (empty)
+        schema = pa.schema([
+            pa.field("user_id", pa.string()),
+            pa.field("embedding", pa.list_(pa.float32(), 128)),
+            pa.field("model_version", pa.string()),
+            pa.field("updated_at", pa.timestamp("us", tz="UTC")),
+        ])
+        
+        empty_table = pa.table(
+            {"user_id": [], "embedding": [], "model_version": [], "updated_at": []},
+            schema=schema,
+        )
+        
+        buf = BytesIO()
+        pq.write_table(empty_table, buf)
+        buf.seek(0)
+        
+        embeddings_key = f"models/{version}/user_embeddings.parquet"
+        client.put_object(BUCKET_DATA, embeddings_key, buf, buf.getbuffer().nbytes)
+        log.info(f"  ✓ Created {embeddings_key}")
+        
+        log.info("✓ Bootstrap data created")
+
+
+    def main():
+        try:
+            client = get_minio_client()
+            
+            # 1. Create buckets
+            create_bucket(client)
+            
+            # 2. Download and upload Triton models from local files
+            upload_triton_models(client)
+            
+            # 3. Download and upload PyTorch model from local file
+            upload_pytorch_model(client, BOOTSTRAP_VERSION)
+            
+            # 4. Create directory structure
+            create_directory_structure(client)
+            
+            # 5. Create bootstrap data
+            create_bootstrap_data(client, BOOTSTRAP_VERSION)
+            
+            log.info("\n=== Bucket Setup Complete ===")
+            log.info(f"Buckets: {BUCKET_DATA}, {BUCKET_TRITON}")
+            log.info(f"Models uploaded from: /models (local files)")
+            return 0
+            
+        except Exception as e:
+            log.error(f"Bucket initialization failed: {e}", exc_info=True)
+            return 1
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
