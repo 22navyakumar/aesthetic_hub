@@ -7,22 +7,29 @@ spec:
   template:
     spec:
       containers:
-        - name: mc
-          image: minio/mc
+        - name: bucket-init
+          image: python:3.11-slim
           command: ["sh", "-c"]
           args:
             - |
-              mc alias set myminio http://minio.platform.svc.cluster.local:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-              mc mb --ignore-existing myminio/aesthetic-hub-data
+              pip install --quiet minio pyarrow &&
+              python3 /scripts/bucket_init.py
           env:
-            - name: AWS_ACCESS_KEY_ID
+            - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
                   name: minio-credentials
                   key: accesskey
-            - name: AWS_SECRET_ACCESS_KEY
+            - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+      volumes:
+        - name: scripts
+          configMap:
+            name: bucket-init-script
       restartPolicy: OnFailure
