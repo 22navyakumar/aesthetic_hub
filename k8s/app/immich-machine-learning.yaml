@@ -32,6 +32,7 @@ spec:
       containers:
         - name: immich-machine-learning
           image: ghcr.io/binti-p/immich-machine-learning:main
+          imagePullPolicy: Always
           ports:
             - containerPort: 3003
               name: http

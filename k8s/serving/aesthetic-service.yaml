@@ -18,6 +18,7 @@ spec:
       containers:
         - name: aesthetic-service
           image: ghcr.io/binti-p/aesthetic-service:main
+          imagePullPolicy: Always
           env:
             - name: POSTGRES_HOST
               value: immich-postgres
