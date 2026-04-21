@@ -7,13 +7,12 @@ data:
   bucket_init.py: |
     """
     MinIO bucket initialization for aesthetic-hub.
-    Creates buckets and downloads initial Triton models from GitHub.
+    Creates buckets and uploads initial Triton models from local files.
     """
     import json
     import logging
     import os
     import sys
-    import urllib.request
     from datetime import datetime, timezone
     from io import BytesIO
     from pathlib import Path
@@ -25,10 +24,9 @@ data:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     log = logging.getLogger(__name__)
 
-    # GitHub repo for model files
-    GITHUB_REPO = "https://raw.githubusercontent.com/binti-p/immich/main"
-    TRITON_MODELS_BASE = f"{GITHUB_REPO}/triton-models"
-    BOOTSTRAP_PTH_URL = f"{GITHUB_REPO}/aesthetic/pipelines/batch/bootstrap_personalized_model.pth"
+    # Local model files (mounted from ConfigMap/hostPath)
+    TRITON_MODELS_BASE = Path("/models/triton")
+    BOOTSTRAP_PTH_PATH = Path("/models/bootstrap_personalized_model.pth")
 
     # MinIO config
     MINIO_HOST = "minio.platform.svc.cluster.local:9000"
@@ -55,9 +53,13 @@ data:
                 log.info(f"✓ Bucket already exists: {bucket}")
 
 
-    def download_and_upload_triton_models(client: Minio):
-        """Download Triton models from GitHub and upload to MinIO."""
-        log.info("\nDownloading and uploading Triton models...")
+    def upload_triton_models(client: Minio):
+        """Upload Triton models from local files to MinIO."""
+        log.info("\nUploading Triton models from local files...")
+        
+        if not TRITON_MODELS_BASE.exists():
+            log.error(f"Triton models directory not found: {TRITON_MODELS_BASE}")
+            return
         
         environments = ["canary", "staging", "production"]
         model_configs = [
@@ -69,13 +71,18 @@ data:
         
         for env in environments:
             for model_type, file_path in model_configs:
-                github_url = f"{TRITON_MODELS_BASE}/{model_type}/{file_path}"
+                local_path = TRITON_MODELS_BASE / model_type / file_path
                 minio_path = f"{env}/{model_type}/{file_path}"
                 
                 try:
-                    log.info(f"  Downloading {github_url}")
-                    with urllib.request.urlopen(github_url) as response:
-                        data = response.read()
+                    if not local_path.exists():
+                        log.warning(f"  ✗ Local file not found: {local_path}")
+                        continue
+                    
+                    log.info(f"  Uploading {local_path} → {minio_path}")
+                    
+                    with open(local_path, "rb") as f:
+                        data = f.read()
                     
                     # Upload to MinIO
                     client.put_object(
@@ -87,19 +94,24 @@ data:
                     log.info(f"  ✓ Uploaded {minio_path}")
                     
                 except Exception as e:
-                    log.warning(f"  ✗ Failed to download/upload {github_url}: {e}")
+                    log.warning(f"  ✗ Failed to upload {local_path}: {e}")
         
         log.info("✓ Triton models upload complete")
 
 
-    def download_and_upload_pytorch_model(client: Minio, version: str):
-        """Download bootstrap PyTorch model from GitHub and upload to MinIO."""
-        log.info(f"\nDownloading and uploading PyTorch model to models/{version}/...")
+    def upload_pytorch_model(client: Minio, version: str):
+        """Upload bootstrap PyTorch model from local file to MinIO."""
+        log.info(f"\nUploading PyTorch model to models/{version}/...")
+        
+        if not BOOTSTRAP_PTH_PATH.exists():
+            log.error(f"Bootstrap model not found: {BOOTSTRAP_PTH_PATH}")
+            return
         
         try:
-            log.info(f"  Downloading {BOOTSTRAP_PTH_URL}")
-            with urllib.request.urlopen(BOOTSTRAP_PTH_URL) as response:
-                data = response.read()
+            log.info(f"  Uploading {BOOTSTRAP_PTH_PATH}")
+            
+            with open(BOOTSTRAP_PTH_PATH, "rb") as f:
+                data = f.read()
             
             minio_path = f"models/{version}/best_personalized_model.pth"
             client.put_object(
@@ -111,7 +123,7 @@ data:
             log.info(f"  ✓ Uploaded {minio_path}")
             
         except Exception as e:
-            log.warning(f"  ✗ Failed to download/upload PyTorch model: {e}")
+            log.warning(f"  ✗ Failed to upload PyTorch model: {e}")
         
         log.info("✓ PyTorch model upload complete")
 
@@ -187,11 +199,11 @@ data:
             # 1. Create buckets
             create_bucket(client)
             
-            # 2. Download and upload Triton models from GitHub
-            download_and_upload_triton_models(client)
+            # 2. Download and upload Triton models from local files
+            upload_triton_models(client)
             
-            # 3. Download and upload PyTorch model from GitHub
-            download_and_upload_pytorch_model(client, BOOTSTRAP_VERSION)
+            # 3. Download and upload PyTorch model from local file
+            upload_pytorch_model(client, BOOTSTRAP_VERSION)
             
             # 4. Create directory structure
             create_directory_structure(client)
@@ -201,7 +213,7 @@ data:
             
             log.info("\n=== Bucket Setup Complete ===")
             log.info(f"Buckets: {BUCKET_DATA}, {BUCKET_TRITON}")
-            log.info(f"Models downloaded from: {GITHUB_REPO}")
+            log.info(f"Models uploaded from: /models (local files)")
             return 0
             
         except Exception as e:

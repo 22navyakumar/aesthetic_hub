@@ -28,8 +28,15 @@ spec:
           volumeMounts:
             - name: scripts
               mountPath: /scripts
+            - name: model-files
+              mountPath: /models
+              readOnly: true
       volumes:
         - name: scripts
           configMap:
             name: bucket-init-script
+        - name: model-files
+          hostPath:
+            path: /root/aesthetic_hub/k8s/models
+            type: Directory
       restartPolicy: OnFailure
