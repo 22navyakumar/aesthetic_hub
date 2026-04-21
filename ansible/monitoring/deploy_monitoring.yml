@@ -14,8 +14,8 @@
   hosts: node1
   become: yes
   vars:
-    repo_root: /home/cc/aesthetic_hub
-    monitoring_dir: "{{ repo_root }}/k8s/monitoring"
+    repo_root: /home/cc/immich
+    monitoring_dir: "{{ repo_root }}/deploy/k8s/monitoring"
     grafana_admin_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
 
   tasks:
@@ -169,6 +169,9 @@
     # ----------------------------------------------------------------
     - name: Apply HPA for Immich Server
       command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-server.yaml
+
+    - name: Apply HPA for Immich Web
+      command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-web.yaml
 
     # ----------------------------------------------------------------
     # 13. Apply Argo Workflow RBAC + templates

@@ -129,6 +129,22 @@ data:
             action: keep
             regex: argo-server
 
+      # Immich Server metrics
+      - job_name: immich-server
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [aesthetic-hub]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_endpoints_name]
+            action: keep
+            regex: immich-server
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            action: keep
+            regex: http
+        metrics_path: /metrics
+
       # Auto-discover all pods with prometheus annotations
       - job_name: kubernetes-pods
         kubernetes_sd_configs:
@@ -306,7 +322,7 @@ data:
               description: "MinIO has 0 available replicas. Artifact storage and training data are inaccessible."
 
           - alert: InferenceServiceDown
-            expr: kube_deployment_status_available_replicas{namespace="aesthetic-hub",deployment="aesthetic-inference"} == 0
+            expr: kube_deployment_status_available_replicas{namespace="aesthetic-hub",deployment="aesthetic-scoring-production"} == 0
             for: 2m
             labels:
               severity: critical
@@ -315,7 +331,7 @@ data:
               description: "Inference deployment has 0 available replicas. Aesthetic scoring is unavailable."
 
           - alert: InferenceHighLatency
-            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="aesthetic-inference"}[5m])) > 2
+            expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="aesthetic-scoring-production"}[5m])) > 2
             for: 5m
             labels:
               severity: warning
@@ -324,7 +340,7 @@ data:
               description: "p95 inference latency is {{ printf \"%.2f\" $value }}s. SLA target is <2s."
 
           - alert: InferenceErrorRateHigh
-            expr: rate(http_requests_total{job="aesthetic-inference",status=~"5.."}[5m]) / rate(http_requests_total{job="aesthetic-inference"}[5m]) > 0.05
+            expr: rate(http_requests_total{job="aesthetic-scoring-production",status=~"5.."}[5m]) / rate(http_requests_total{job="aesthetic-scoring-production"}[5m]) > 0.05
             for: 5m
             labels:
               severity: warning
@@ -333,7 +349,7 @@ data:
               description: "Inference error rate is {{ printf \"%.1f\" ($value * 100) }}% over the last 5 minutes."
 
           - alert: InferenceLowThroughput
-            expr: rate(http_requests_total{job="aesthetic-inference"}[5m]) < 0.1
+            expr: rate(http_requests_total{job="aesthetic-scoring-production"}[5m]) < 0.1
             for: 30m
             labels:
               severity: warning
@@ -425,3 +441,63 @@ data:
             annotations:
               summary: "AlertManager is down"
               description: "AlertManager has 0 available replicas. Alerts will not be routed or deduplicated."
+      - name: aesthetic-scoring
+        rules:
+
+          - alert: ScoringServiceHighErrorRate
+            expr: |
+              sum(rate(scoring_errors_total{environment="production"}[5m]))
+              / sum(rate(scoring_latency_seconds_count{environment="production"}[5m]))
+              > 0.02
+            for: 5m
+            labels:
+              severity: critical
+              team: serving
+            annotations:
+              summary: "Scoring service error rate above 2%"
+              description: "Production scoring error rate is {{ $value | humanizePercentage }}"
+
+          - alert: ScoringServiceHighLatency
+            expr: |
+              histogram_quantile(0.95,
+                sum(rate(scoring_latency_seconds_bucket{environment="production"}[5m])) by (le)
+              ) * 1000 > 200
+            for: 5m
+            labels:
+              severity: warning
+              team: serving
+            annotations:
+              summary: "Scoring service P95 latency above 200ms"
+              description: "P95 latency is {{ $value }}ms"
+
+          - alert: HighLowConfidenceRate
+            expr: |
+              sum(rate(scoring_low_confidence_total{environment="production"}[10m]))
+              / sum(rate(scoring_latency_seconds_count{environment="production"}[10m]))
+              > 0.3
+            for: 10m
+            labels:
+              severity: warning
+              team: serving
+            annotations:
+              summary: "More than 30% of scores flagged low-confidence"
+              description: "Possible model drift or data quality issue"
+          
+          - alert: ScoreDrift
+            expr: |
+              abs(
+                avg_over_time(scoring_final_score_sum[1h])
+                /
+                avg_over_time(scoring_latency_seconds_count[1h])
+                -
+                avg_over_time(scoring_final_score_sum[7d])
+                /
+                avg_over_time(scoring_latency_seconds_count[7d])
+              ) > 0.2
+            for: 30m
+            labels:
+              severity: warning
+              team: serving
+            annotations:
+              summary: "Aesthetic score distribution has drifted"
+              description: "Mean score shifted by {{ $value | humanize }} vs 7-day baseline. Check new model behavior."

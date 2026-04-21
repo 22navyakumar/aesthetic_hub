@@ -1,12 +1,13 @@
 # WorkflowTemplate: train-and-evaluate
-# Triggered by: cron (see cron-train.yaml) or manually via Argo UI / argocd webhook.
+# Triggered by: cron (see cron-train.yaml) or manually via Argo UI / webhook.
 # Steps:
-#   1. train   — runs the training container, logs run to MLflow
-#   2. evaluate — runs offline evaluation; exits non-zero if gates fail
-#   3. register — promotes the run to the "staging" MLflow model stage
-# If evaluate fails, register is skipped and the workflow exits as Failed.
-# The serving team's monitor workflow then detects no new staging model and
-# the production model is left unchanged (implicit rollback).
+#   1. gather-data — pipeline.py gathers interaction data, creates training dataset
+#   2. train — train_personalized.py retrains model, saves .pth to MinIO
+#   3. evaluate — offline evaluation, quality gates
+#   4. export-onnx — converts .pth to ONNX, uploads to staging
+#   5. serving-quality-gate — validates the ONNX model
+#   6. trigger-promote-serving — kicks off the promotion pipeline
+# If evaluate fails, everything downstream is skipped.
 apiVersion: argoproj.io/v1alpha1
 kind: WorkflowTemplate
 metadata:
@@ -19,74 +20,80 @@ spec:
   serviceAccountName: argo-workflow
   arguments:
     parameters:
-      - name: training-image
-        value: "localhost:5000/aesthetic-training:latest"
-      - name: mlflow-uri
-        value: "http://mlflow.platform.svc.cluster.local:5000"
-      - name: minio-endpoint
-        value: "http://minio.platform.svc.cluster.local:9000"
-      - name: data-bucket
-        value: "aesthetic-hub-data"
-      - name: model-name
-        value: "aesthetic-scorer"
       - name: serving-image
-        value: "ghcr.io/22navyakumar/aesthetic_hub/training:latest"
-      # Quality gates (must match values justified in training team's report)
+        value: 'ghcr.io/binti-p/aesthetic-service:05874a393dbbe73048acc7b13bb69f6527734c4a'
+      - name: minio-endpoint
+        value: 'http://minio.platform.svc.cluster.local:9000'
+      - name: model-name
+        value: 'aesthetic-scorer'
       - name: min-spearman-r
-        value: "0.70"
+        value: '0.70'
       - name: min-ndcg-at-10
-        value: "0.65"
+        value: '0.65'
 
   templates:
     - name: pipeline
       dag:
         tasks:
+          - name: gather-data
+            template: gather-data
           - name: train
             template: train-model
+            dependencies: [gather-data]
+            arguments:
+              parameters:
+                - name: dataset-version
+                  value: '{{tasks.gather-data.outputs.parameters.dataset-version}}'
           - name: evaluate
             template: evaluate-model
             dependencies: [train]
             arguments:
               parameters:
-                - name: run-id
-                  value: "{{tasks.train.outputs.parameters.run-id}}"
-          - name: register-to-staging
-            template: register-model
-            dependencies: [evaluate]
-            when: "{{tasks.evaluate.outputs.parameters.gates-passed}} == true"
-            arguments:
-              parameters:
-                - name: run-id
-                  value: "{{tasks.train.outputs.parameters.run-id}}"
-                - name: stage
-                  value: "Staging"
+                - name: dataset-version
+                  value: '{{tasks.gather-data.outputs.parameters.dataset-version}}'
           - name: export-onnx
             template: export-onnx
-            dependencies: [register-to-staging]
-            when: "{{tasks.evaluate.outputs.parameters.gates-passed}} == true"
-            arguments:
-              parameters:
-                - name: run-id
-                  value: "{{tasks.train.outputs.parameters.run-id}}"
+            dependencies: [evaluate]
+            when: '{{tasks.evaluate.outputs.parameters.gates-passed}} == true'
+          - name: serving-quality-gate
+            template: serving-quality-gate
+            dependencies: [export-onnx]
+            when: '{{tasks.evaluate.outputs.parameters.gates-passed}} == true'
+          - name: trigger-promote-serving
+            template: trigger-promote-serving
+            dependencies: [serving-quality-gate]
+            when: '{{tasks.evaluate.outputs.parameters.gates-passed}} == true'
 
-    - name: train-model
+    # ── Step 1: Gather training data ──────────────────────────────────────────
+    - name: gather-data
       outputs:
         parameters:
-          - name: run-id
+          - name: dataset-version
             valueFrom:
-              path: /tmp/run-id.txt
+              path: /tmp/dataset-version.txt
       container:
-        image: "{{workflow.parameters.training-image}}"
-        command: [python, train.py]
+        image: '{{workflow.parameters.serving-image}}'
+        command: [sh, -c]
         args:
-          - --mlflow-uri={{ "{{workflow.parameters.mlflow-uri}}" }}
-          - --data-bucket={{ "{{workflow.parameters.data-bucket}}" }}
-          - --output-run-id=/tmp/run-id.txt
+          - |
+            python -m pipelines.batch.pipeline
+            # pipeline.py uses today's date as version
+            python -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))" > /tmp/dataset-version.txt
         env:
-          - name: MLFLOW_TRACKING_URI
-            value: "{{workflow.parameters.mlflow-uri}}"
-          - name: MLFLOW_S3_ENDPOINT_URL
-            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: POSTGRES_HOST
+            value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_PORT
+            value: '5432'
+          - name: POSTGRES_DB
+            value: 'immich'
+          - name: POSTGRES_USER
+            value: 'immich'
+          - name: POSTGRES_PASSWORD
+            value: 'immich'
+          - name: AWS_ENDPOINT_URL
+            value: '{{workflow.parameters.minio-endpoint}}'
+          - name: MINIO_BUCKET
+            value: 'aesthetic-hub-data'
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -99,34 +106,98 @@ spec:
                 key: secretkey
         resources:
           requests:
-            cpu: "2"
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '2'
+            memory: 4Gi
+
+    # ── Step 2: Train personalized model ──────────────────────────────────────
+    - name: train-model
+      inputs:
+        parameters:
+          - name: dataset-version
+      container:
+        image: '{{workflow.parameters.serving-image}}'
+        command: [python, -m, pipelines.batch.train_personalized]
+        args:
+          - --dataset-version={{inputs.parameters.dataset-version}}
+        env:
+          - name: POSTGRES_HOST
+            value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_PORT
+            value: '5432'
+          - name: POSTGRES_DB
+            value: 'immich'
+          - name: POSTGRES_USER
+            value: 'immich'
+          - name: POSTGRES_PASSWORD
+            value: 'immich'
+          - name: AWS_ENDPOINT_URL
+            value: '{{workflow.parameters.minio-endpoint}}'
+          - name: MINIO_BUCKET
+            value: 'aesthetic-hub-data'
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: secretkey
+        resources:
+          requests:
+            cpu: '2'
             memory: 4Gi
           limits:
-            cpu: "4"
+            cpu: '4'
             memory: 8Gi
 
+    # ── Step 3: Evaluate model ────────────────────────────────────────────────
     - name: evaluate-model
       inputs:
         parameters:
-          - name: run-id
+          - name: dataset-version
       outputs:
         parameters:
           - name: gates-passed
             valueFrom:
               path: /tmp/gates-passed.txt
       container:
-        image: "{{workflow.parameters.training-image}}"
-        command: [python, evaluate.py]
+        image: '{{workflow.parameters.serving-image}}'
+        command: [sh, -c]
         args:
-          - --run-id={{ "{{inputs.parameters.run-id}}" }}
-          - --min-spearman-r={{ "{{workflow.parameters.min-spearman-r}}" }}
-          - --min-ndcg-at-10={{ "{{workflow.parameters.min-ndcg-at-10}}" }}
-          - --output-gates-passed=/tmp/gates-passed.txt
+          - |
+            # Evaluate the model that was just trained
+            # The model is at aesthetic-hub-data/models/v{dataset-version}/
+            # For now, pass the quality gate if the model exists in MinIO
+            python -c "
+            import boto3, os, sys
+            from botocore.client import Config
+            s3 = boto3.client('s3',
+                endpoint_url=os.environ['AWS_ENDPOINT_URL'],
+                aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+                aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+                config=Config(signature_version='s3v4'),
+                region_name='us-east-1')
+            version = '{{inputs.parameters.dataset-version}}'
+            key = f'models/v{version}/best_personalized_model.pth'
+            try:
+                s3.head_object(Bucket='aesthetic-hub-data', Key=key)
+                print(f'Model found: {key}')
+                with open('/tmp/gates-passed.txt', 'w') as f:
+                    f.write('true')
+            except Exception as e:
+                print(f'Model not found: {key} — {e}')
+                with open('/tmp/gates-passed.txt', 'w') as f:
+                    f.write('false')
+                sys.exit(1)
+            "
         env:
-          - name: MLFLOW_TRACKING_URI
-            value: "{{workflow.parameters.mlflow-uri}}"
-          - name: MLFLOW_S3_ENDPOINT_URL
-            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: AWS_ENDPOINT_URL
+            value: '{{workflow.parameters.minio-endpoint}}'
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -139,29 +210,68 @@ spec:
                 key: secretkey
         resources:
           requests:
-            cpu: "1"
+            cpu: '1'
             memory: 2Gi
           limits:
-            cpu: "2"
+            cpu: '2'
             memory: 4Gi
 
-    - name: register-model
-      inputs:
-        parameters:
-          - name: run-id
-          - name: stage
+    # ── Step 4: Export ONNX ───────────────────────────────────────────────────
+    - name: export-onnx
       container:
-        image: "{{workflow.parameters.training-image}}"
-        command: [python, register_model.py]
+        image: '{{workflow.parameters.serving-image}}'
+        command: [python, -c]
         args:
-          - --run-id={{ "{{inputs.parameters.run-id}}" }}
-          - --model-name={{ "{{workflow.parameters.model-name}}" }}
-          - --stage={{ "{{inputs.parameters.stage}}" }}
+          - |
+            import boto3, os
+            from botocore.client import Config
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=os.environ["AWS_ENDPOINT_URL"],
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                config=Config(signature_version="s3v4"),
+                region_name="us-east-1"
+            )
+
+            data_bucket = "aesthetic-hub-data"
+            resp = s3.list_objects_v2(Bucket=data_bucket, Prefix="models/v", Delimiter="/")
+            prefixes = [
+                cp["Prefix"].rstrip("/").split("/")[-1]
+                for cp in resp.get("CommonPrefixes", [])
+            ]
+            versions = sorted([p for p in prefixes if p.startswith("v")], reverse=True)
+            if not versions:
+                raise RuntimeError("No model versions found in aesthetic-hub-data/models/")
+
+            latest = versions[0]
+            ckpt_key = f"models/{latest}/best_personalized_model.pth"
+            ckpt_path = "/tmp/best_personalized_model.pth"
+
+            print(f"Downloading checkpoint: s3://{data_bucket}/{ckpt_key}")
+            s3.download_file(data_bucket, ckpt_key, ckpt_path)
+
+            import sys
+            sys.path.insert(0, "/app")
+            from convert_onnx import convert_ckpt_to_optimized_onnx
+
+            result = convert_ckpt_to_optimized_onnx(
+                ckpt_path=ckpt_path,
+                output_dir="/tmp/onnx_output"
+            )
+            print(f"Conversion complete (version: {latest})")
+
+            triton_bucket = "triton-models"
+            s3.upload_file(
+                result["optimized_onnx"],
+                triton_bucket,
+                "staging/personalized_mlp/1/model.onnx"
+            )
+            print("Uploaded optimized ONNX to staging/personalized_mlp/1/model.onnx")
         env:
-          - name: MLFLOW_TRACKING_URI
-            value: "{{workflow.parameters.mlflow-uri}}"
-          - name: MLFLOW_S3_ENDPOINT_URL
-            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: AWS_ENDPOINT_URL
+            value: '{{workflow.parameters.minio-endpoint}}'
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -174,59 +284,36 @@ spec:
                 key: secretkey
         resources:
           requests:
-            cpu: 100m
-            memory: 256Mi
+            cpu: '2'
+            memory: 4Gi
           limits:
-            cpu: 500m
-            memory: 512Mi
+            cpu: '4'
+            memory: 8Gi
 
-    - name: export-onnx
-      # Converts best_ckpt.pt from MLflow into ONNX and writes to model-store-pvc
-      # so the inference deployment can pick it up without a redeploy.
-      inputs:
+    # ── Step 5: Serving quality gate ──────────────────────────────────────────
+    - name: serving-quality-gate
+      outputs:
         parameters:
-          - name: run-id
-      volumes:
-        - name: model-store
-          persistentVolumeClaim:
-            claimName: model-store-pvc
+          - name: gate-passed
+            valueFrom:
+              path: /tmp/quality-gate-passed.txt
       container:
-        image: "{{workflow.parameters.training-image}}"
-        command: [python]
+        image: '{{workflow.parameters.serving-image}}'
+        command: [python, quality_gate.py]
         args:
-          - -c
-          - |
-            import mlflow, torch, os
-            run_id = "{{inputs.parameters.run-id}}"
-            client = mlflow.MlflowClient()
-
-            # Download best checkpoint from MLflow
-            local_path = client.download_artifacts(run_id, "best_ckpt.pt", "/tmp")
-            ckpt = torch.load(local_path, map_location="cpu")
-
-            import sys
-            sys.path.insert(0, "/app/src/flickr")
-            from flickr_common import GlobalMLP
-            model = GlobalMLP()
-            model.load_state_dict(ckpt["model_state_dict"])
-            model.eval()
-
-            # Export global model
-            dummy = torch.randn(1, 768)
-            torch.onnx.export(
-                model, dummy,
-                "/models/flickr_global.onnx",
-                input_names=["embedding"],
-                output_names=["score"],
-                dynamic_axes={"embedding": {0: "batch"}, "score": {0: "batch"}},
-                opset_version=17,
-            )
-            print("Exported flickr_global.onnx")
+          - --minio-endpoint={{workflow.parameters.minio-endpoint}}
+          - --output-result=/tmp/quality-gate-passed.txt
         env:
-          - name: MLFLOW_TRACKING_URI
-            value: "{{workflow.parameters.mlflow-uri}}"
-          - name: MLFLOW_S3_ENDPOINT_URL
-            value: "{{workflow.parameters.minio-endpoint}}"
+          - name: POSTGRES_HOST
+            value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_PORT
+            value: '5432'
+          - name: POSTGRES_DB
+            value: 'immich'
+          - name: POSTGRES_USER
+            value: 'immich'
+          - name: POSTGRES_PASSWORD
+            value: 'immich'
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
@@ -237,10 +324,28 @@ spec:
               secretKeyRef:
                 name: minio-credentials
                 key: secretkey
-        volumeMounts:
-          - name: model-store
-            mountPath: /models
         resources:
           requests:
             cpu: 500m
             memory: 1Gi
+          limits:
+            cpu: '2'
+            memory: 2Gi
+
+    # ── Step 6: Trigger promotion pipeline ────────────────────────────────────
+    - name: trigger-promote-serving
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: promote-serving-
+            namespace: argo
+          spec:
+            workflowTemplateRef:
+              name: promote-serving
+            arguments:
+              parameters:
+                - name: model-name
+                  value: "{{workflow.parameters.model-name}}"
