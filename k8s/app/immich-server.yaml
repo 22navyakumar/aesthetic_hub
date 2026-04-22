@@ -15,18 +15,6 @@ spec:
       labels:
         app: immich-server
     spec:
-      initContainers:
-        - name: init-immich-storage
-          image: busybox:1.36
-          command:
-            - sh
-            - -c
-            - |
-              mkdir -p /data/upload /data/thumbs /data/profile /data/backups /data/library /data/encoded-video
-              touch /data/upload/.immich /data/thumbs/.immich /data/profile/.immich /data/backups/.immich /data/library/.immich /data/encoded-video/.immich
-          volumeMounts:
-            - name: immich-upload-storage
-              mountPath: /data
       containers:
         - name: immich-server
           image: ghcr.io/binti-p/immich-server:main
