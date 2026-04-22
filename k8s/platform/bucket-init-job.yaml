@@ -9,26 +9,21 @@ spec:
     spec:
       containers:
         - name: bucket-init
-          image: python:3.11-slim
-          command: ["sh", "-c"]
+          image: minio/mc:latest
+          command: ["/bin/sh", "-c"]
           args:
             - |
               set -e
-              apt-get update
-              apt-get install -y --no-install-recommends git
-              rm -rf /var/lib/apt/lists/*
-              pip install --no-cache-dir minio pyarrow
-              git clone --depth 1 --branch "${GIT_REF:-main}" https://github.com/22navyakumar/aesthetic_hub.git /work/aesthetic_hub
-              ln -s /work/aesthetic_hub/triton-models /triton-models
-              ln -s /work/aesthetic_hub/aesthetic/pipelines /pipelines
-              python -m pipelines.batch.bucket_init
+              mc alias set minio http://minio.platform.svc.cluster.local:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
+              mc mb --ignore-existing minio/aesthetic-hub-data
+              mc mb --ignore-existing minio/mlflow-artifacts
+              mc mb --ignore-existing minio/triton-models
+              echo keep > /tmp/.keep
+              mc cp /tmp/.keep minio/triton-models/staging/.keep
+              mc cp /tmp/.keep minio/triton-models/canary/.keep
+              mc cp /tmp/.keep minio/triton-models/production/.keep
+              mc ls minio
           env:
-            - name: GIT_REF
-              value: main
-            - name: PYTHONPATH
-              value: /work/aesthetic_hub/aesthetic
-            - name: MINIO_HOST
-              value: minio.platform.svc.cluster.local:9000
             - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
