@@ -8,6 +8,7 @@
     app_path: k8s/production
     argocd_namespace: argocd
     target_namespace: aesthetic-hub
+    target_revision: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
 
   tasks:
 
@@ -49,6 +50,7 @@
       command: >
         argocd app create {{ app_name }} \
         --repo {{ repo_url }} \
+        --revision {{ target_revision }} \
         --path {{ app_path }} \
         --dest-server https://kubernetes.default.svc \
         --dest-namespace {{ target_namespace }} \
@@ -59,6 +61,7 @@
       when: app_check.rc == 0
       command: >
         argocd app set {{ app_name }} \
+        --revision {{ target_revision }} \
         --dest-namespace {{ target_namespace }} \
         --port-forward --port-forward-namespace={{ argocd_namespace }}
 
