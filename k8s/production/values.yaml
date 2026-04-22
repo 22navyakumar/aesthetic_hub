@@ -9,7 +9,7 @@ immichServer:
 aestheticService:
   image:
     repository: ghcr.io/binti-p/aesthetic-service
-    tag: main
+    tag:main
     pullPolicy: Always
   port: 8000
 
