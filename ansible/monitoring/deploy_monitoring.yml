@@ -101,6 +101,9 @@
     - name: Apply Prometheus ConfigMap
       command: kubectl apply -f {{ monitoring_dir }}/prometheus-configmap.yaml
 
+    - name: Apply Prometheus alert rules ConfigMap
+      command: kubectl apply -f {{ monitoring_dir }}/alert-rules.yaml
+
     - name: Apply Prometheus Deployment + Service + PVC
       command: kubectl apply -f {{ monitoring_dir }}/prometheus-deployment.yaml
 
