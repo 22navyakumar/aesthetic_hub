@@ -4,17 +4,41 @@ metadata:
   name: bucket-init
   namespace: aesthetic-hub
 spec:
+  backoffLimit: 3
   template:
     spec:
       containers:
-        - name: mc
-          image: minio/mc
+        - name: bucket-init
+          image: python:3.11-slim
           command: ["sh", "-c"]
           args:
             - |
-              mc alias set myminio http://minio.platform.svc.cluster.local:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-              mc mb --ignore-existing myminio/aesthetic-hub-data
+              set -e
+              apt-get update
+              apt-get install -y --no-install-recommends git
+              rm -rf /var/lib/apt/lists/*
+              pip install --no-cache-dir minio pyarrow
+              git clone --depth 1 --branch "${GIT_REF:-main}" https://github.com/22navyakumar/aesthetic_hub.git /work/aesthetic_hub
+              ln -s /work/aesthetic_hub/triton-models /triton-models
+              ln -s /work/aesthetic_hub/aesthetic/pipelines /pipelines
+              python -m pipelines.batch.bucket_init
           env:
+            - name: GIT_REF
+              value: main
+            - name: PYTHONPATH
+              value: /work/aesthetic_hub/aesthetic
+            - name: MINIO_HOST
+              value: minio.platform.svc.cluster.local:9000
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: accesskey
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: secretkey
             - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:

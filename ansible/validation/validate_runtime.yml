@@ -1,0 +1,115 @@
+---
+- name: Validate Immich Aesthetic Hub runtime on Chameleon
+  hosts: node1
+  become: yes
+  vars:
+    app_namespace: aesthetic-hub
+    platform_namespace: platform
+    monitoring_namespace: monitoring
+
+  tasks:
+    - name: Check Kubernetes nodes
+      command: kubectl get nodes -o wide
+      register: nodes
+      changed_when: false
+
+    - name: Show nodes
+      debug:
+        var: nodes.stdout_lines
+
+    - name: Wait for core app workloads
+      command: "{{ item }}"
+      loop:
+        - kubectl rollout status statefulset/immich-postgres -n {{ app_namespace }} --timeout=180s
+        - kubectl rollout status deployment/immich-redis -n {{ app_namespace }} --timeout=120s
+        - kubectl rollout status deployment/immich-machine-learning -n {{ app_namespace }} --timeout=300s
+        - kubectl rollout status deployment/immich-server -n {{ app_namespace }} --timeout=300s
+      changed_when: false
+
+    - name: Wait for platform workloads
+      command: "{{ item }}"
+      loop:
+        - kubectl rollout status deployment/minio -n {{ platform_namespace }} --timeout=180s
+        - kubectl wait --for=condition=complete job/bucket-init -n {{ app_namespace }} --timeout=600s
+        - kubectl rollout status deployment/mlflow-postgres -n {{ platform_namespace }} --timeout=180s
+        - kubectl rollout status deployment/mlflow -n {{ platform_namespace }} --timeout=300s
+      changed_when: false
+
+    - name: Wait for production scoring workloads
+      command: "{{ item }}"
+      loop:
+        - kubectl rollout status deployment/triton-production -n {{ app_namespace }} --timeout=300s
+        - kubectl rollout status deployment/aesthetic-service -n {{ app_namespace }} --timeout=300s
+      changed_when: false
+
+    - name: Wait for monitoring workloads
+      command: "{{ item }}"
+      loop:
+        - kubectl rollout status deployment/prometheus -n {{ monitoring_namespace }} --timeout=180s
+        - kubectl rollout status deployment/grafana -n {{ monitoring_namespace }} --timeout=180s
+      changed_when: false
+
+    - name: Check Immich Postgres tables
+      shell: |
+        set -e
+        password="$(kubectl get secret immich-postgres-secret -n {{ app_namespace }} -o jsonpath='{.data.password}' | base64 --decode)"
+        kubectl exec -n {{ app_namespace }} statefulset/immich-postgres -- \
+          env PGPASSWORD="$password" psql -U immich -d immich -tAc \
+          "select to_regclass('public.asset'), to_regclass('public.smart_search'), to_regclass('public.aesthetic_scores');"
+      args:
+        executable: /bin/bash
+      register: immich_tables
+      changed_when: false
+
+    - name: Show Immich table check
+      debug:
+        var: immich_tables.stdout
+
+    - name: Check MinIO buckets and required prefixes
+      shell: |
+        set -e
+        accesskey="$(kubectl get secret minio-credentials -n {{ app_namespace }} -o jsonpath='{.data.accesskey}' | base64 --decode)"
+        secretkey="$(kubectl get secret minio-credentials -n {{ app_namespace }} -o jsonpath='{.data.secretkey}' | base64 --decode)"
+        kubectl run minio-check-$$ -n {{ app_namespace }} --rm -i --restart=Never --image=minio/mc \
+          --env="AWS_ACCESS_KEY_ID=$accesskey" \
+          --env="AWS_SECRET_ACCESS_KEY=$secretkey" -- \
+          sh -c '
+            mc alias set hub http://minio.platform.svc.cluster.local:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY" >/dev/null &&
+            mc ls hub/aesthetic-hub-data/models/v0000-00-00/ >/dev/null &&
+            mc ls hub/aesthetic-hub-data/datasets/v0000-00-00/personalized-flickr/ >/dev/null &&
+            mc ls hub/aesthetic-hub-data/production-sim/ >/dev/null &&
+            mc ls hub/mlflow-artifacts/ >/dev/null &&
+            mc ls hub/triton-models/production/global_mlp/1/model.onnx >/dev/null &&
+            mc ls hub/triton-models/production/personalized_mlp/1/model.onnx >/dev/null &&
+            mc ls hub/triton-models/staging/ >/dev/null &&
+            mc ls hub/triton-models/canary/ >/dev/null
+          '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Check service health endpoints from inside cluster
+      shell: |
+        set -e
+        kubectl run health-check-$$ -n {{ app_namespace }} --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+          sh -c '
+            curl -fsS http://immich-server:2283/api/server-info/ping &&
+            curl -fsS http://immich-machine-learning:3003/ping &&
+            curl -fsS http://aesthetic-service:8000/health &&
+            curl -fsS http://triton-production:8000/v2/health/ready &&
+            curl -fsS http://mlflow.platform.svc.cluster.local:5000/health &&
+            curl -fsS http://prometheus.monitoring.svc.cluster.local:9090/-/ready &&
+            curl -fsS http://grafana.monitoring.svc.cluster.local:3000/api/health
+          '
+      args:
+        executable: /bin/bash
+      changed_when: false
+
+    - name: Show exposed services
+      command: kubectl get svc -A -o wide
+      register: services
+      changed_when: false
+
+    - name: Print exposed services
+      debug:
+        var: services.stdout_lines

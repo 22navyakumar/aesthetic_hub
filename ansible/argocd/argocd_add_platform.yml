@@ -16,8 +16,14 @@
     repo_path: "https://github.com/22navyakumar/aesthetic_hub.git"
     app_name: "aes-platform"
     app_path: "k8s/platform"
-    minio_access_key: "your-access-key"
-    postgres_username: "user"
+    platform_namespace: "platform"
+    app_namespaces:
+      - aesthetic-hub
+      - aesthetic-hub-staging
+      - aesthetic-hub-canary
+      - argo
+    minio_access_key: "minioadmin"
+    postgres_username: "mlflow"
     postgres_db: "mlflowdb"
 
   tasks:
@@ -44,22 +50,25 @@
       register: repo_result
       changed_when: "'Repository already exists' not in repo_result.stderr"
 
-    - name: Detect external IP starting with 10.56
-      set_fact:
-        external_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
-
-    - name: Ensure aes-platform namespace exists
-      command: kubectl get namespace aes-platform
+    - name: Ensure platform namespace exists
+      command: kubectl get namespace {{ platform_namespace }}
       register: ns_check
       failed_when: false
       changed_when: false
 
-    - name: Create aes-platform namespace if missing
+    - name: Create platform namespace if missing
       when: ns_check.rc != 0
-      command: kubectl create namespace aes-platform
+      command: kubectl create namespace {{ platform_namespace }}
 
-    - name: Check if MinIO secret already exists
-      command: kubectl get secret minio-credentials -n aes-platform
+    - name: Ensure app and workflow namespaces that need MinIO credentials exist
+      command: kubectl create namespace {{ item }}
+      loop: "{{ app_namespaces }}"
+      register: app_ns_create
+      failed_when: app_ns_create.rc != 0 and "AlreadyExists" not in app_ns_create.stderr
+      changed_when: "'created' in app_ns_create.stdout"
+
+    - name: Check if MinIO secret already exists in platform namespace
+      command: kubectl get secret minio-credentials -n {{ platform_namespace }}
       register: minio_secret_check
       failed_when: false
       changed_when: false
@@ -73,13 +82,34 @@
       when: minio_secret_check.rc != 0
       command: >
         kubectl create secret generic minio-credentials
-        --namespace aes-platform
+        --namespace {{ platform_namespace }}
         --from-literal=accesskey={{ minio_access_key }}
         --from-literal=secretkey={{ minio_secret_key }}
       register: minio_secret_create
 
-    - name: Check if Postgres secret already exists
-      command: kubectl get secret postgres-credentials -n aes-platform
+    - name: Read MinIO credentials from platform namespace
+      command: >
+        kubectl get secret minio-credentials -n {{ platform_namespace }}
+        -o jsonpath='{.data.accesskey} {.data.secretkey}'
+      register: minio_secret_values
+      changed_when: false
+
+    - name: Copy MinIO credentials to dependent namespaces
+      shell: |
+        set -e
+        accesskey="$(printf '%s' '{{ minio_secret_values.stdout.split()[0] }}' | base64 --decode)"
+        secretkey="$(printf '%s' '{{ minio_secret_values.stdout.split()[1] }}' | base64 --decode)"
+        kubectl create secret generic minio-credentials \
+          --namespace {{ item }} \
+          --from-literal=accesskey="$accesskey" \
+          --from-literal=secretkey="$secretkey" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      loop: "{{ app_namespaces }}"
+
+    - name: Check if MLflow Postgres secret already exists
+      command: kubectl get secret mlflow-postgres-credentials -n {{ platform_namespace }}
       register: postgres_secret_check
       failed_when: false
       changed_when: false
@@ -92,8 +122,8 @@
     - name: Create Postgres credentials secret
       when: postgres_secret_check.rc != 0
       command: >
-        kubectl create secret generic postgres-credentials
-        --namespace aes-platform
+        kubectl create secret generic mlflow-postgres-credentials
+        --namespace {{ platform_namespace }}
         --from-literal=username={{ postgres_username }}
         --from-literal=password={{ postgres_password }}
         --from-literal=dbname={{ postgres_db }}
@@ -113,10 +143,7 @@
         --repo {{ repo_path }} \
         --path {{ app_path }} \
         --dest-server https://kubernetes.default.svc \
-        --dest-namespace "" \
-        --helm-set-string gateway.externalIP={{ external_ip }} \
-        --helm-set-string minio.externalIP={{ external_ip }} \
-        --helm-set-string mlflow.externalIP={{ external_ip }} \
+        --dest-namespace {{ platform_namespace }} \
         --port-forward --port-forward-namespace=argocd \
         --sync-policy automated --self-heal
       register: app_create
@@ -125,9 +152,6 @@
       when: app_check.rc == 0
       command: >
         argocd app set {{ app_name }} \
-        --dest-namespace "" \
-        --helm-set-string gateway.externalIP={{ external_ip }} \
-        --helm-set-string minio.externalIP={{ external_ip }} \
-        --helm-set-string mlflow.externalIP={{ external_ip }} \
+        --dest-namespace {{ platform_namespace }} \
         --port-forward --port-forward-namespace=argocd
       register: app_update

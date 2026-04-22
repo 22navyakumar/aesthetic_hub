@@ -7,6 +7,7 @@
     repo_url: https://github.com/22navyakumar/aesthetic_hub.git
     app_path: k8s/production
     argocd_namespace: argocd
+    target_namespace: aesthetic-hub
 
   tasks:
 
@@ -27,15 +28,15 @@
         --grpc-web --port-forward --port-forward-namespace={{ argocd_namespace }}
       changed_when: false
 
-    - name: Detect external IP starting with 10.56
-      set_fact:
-        external_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
-
     - name: Create aesthetic-hub namespace if missing
-      command: kubectl create namespace aesthetic-hub
+      command: kubectl create namespace {{ target_namespace }}
       register: ns_create
       failed_when: ns_create.rc != 0 and "AlreadyExists" not in ns_create.stderr
       changed_when: "'created' in ns_create.stdout"
+
+    - name: Verify Immich Postgres secret exists
+      command: kubectl get secret immich-postgres-secret -n {{ target_namespace }}
+      changed_when: false
 
     - name: Check if ArgoCD app exists
       command: argocd app get {{ app_name }} --port-forward --port-forward-namespace={{ argocd_namespace }}
@@ -50,8 +51,7 @@
         --repo {{ repo_url }} \
         --path {{ app_path }} \
         --dest-server https://kubernetes.default.svc \
-        --dest-namespace "" \
-        --helm-set-string service.externalIP={{ external_ip }} \
+        --dest-namespace {{ target_namespace }} \
         --sync-policy automated --self-heal \
         --port-forward --port-forward-namespace={{ argocd_namespace }}
 
@@ -59,7 +59,7 @@
       when: app_check.rc == 0
       command: >
         argocd app set {{ app_name }} \
-        --helm-set-string service.externalIP={{ external_ip }} \
+        --dest-namespace {{ target_namespace }} \
         --port-forward --port-forward-namespace={{ argocd_namespace }}
 
     - name: Display ArgoCD app status

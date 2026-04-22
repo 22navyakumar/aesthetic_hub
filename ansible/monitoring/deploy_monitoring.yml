@@ -14,8 +14,8 @@
   hosts: node1
   become: yes
   vars:
-    repo_root: /home/cc/immich
-    monitoring_dir: "{{ repo_root }}/deploy/k8s/monitoring"
+    repo_root: /home/cc/aesthetic_hub
+    monitoring_dir: "{{ repo_root }}/k8s/monitoring"
     grafana_admin_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
 
   tasks:
@@ -170,9 +170,6 @@
     - name: Apply HPA for Immich Server
       command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-server.yaml
 
-    - name: Apply HPA for Immich Web
-      command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-web.yaml
-
     # ----------------------------------------------------------------
     # 13. Apply Argo Workflow RBAC + templates
     # ----------------------------------------------------------------
@@ -210,17 +207,15 @@
     # 15. Print service endpoints
     # ----------------------------------------------------------------
     - name: Get node external IP
-      shell: |
-        kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
-      register: node_ip
-      changed_when: false
+      set_fact:
+        node_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
 
     - name: Print monitoring service endpoints
       debug:
         msg:
           - "=== Monitoring Endpoints ==="
-          - "Prometheus:    http://{{ node_ip.stdout }}:30090"
-          - "AlertManager:  http://{{ node_ip.stdout }}:30093"
-          - "Grafana:       http://{{ node_ip.stdout }}:30030  (admin / <see above>)"
-          - "MLflow:        http://{{ node_ip.stdout }}:30500"
+          - "Prometheus:    http://{{ node_ip }}:30090"
+          - "AlertManager:  http://{{ node_ip }}:30093"
+          - "Grafana:       http://{{ node_ip }}:30030  (admin / <see above>)"
+          - "MLflow:        http://{{ node_ip }}:30500"
           - "==========================="
