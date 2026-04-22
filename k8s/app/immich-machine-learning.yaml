@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: immich-machine-learning
-          image: ghcr.io/immich-app/immich-machine-learning:release
+          image: ghcr.io/binti-p/immich-machine-learning:main
           env:
             - name: MACHINE_LEARNING_CACHE_FOLDER
               value: /cache

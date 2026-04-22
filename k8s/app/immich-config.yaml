@@ -24,7 +24,7 @@ data:
         enabled: true
         modelName: ViT-L-14__openai
       duplicateDetection:
-        enabled: false
+        enabled: true
         maxDistance: 0.01
       facialRecognition:
         enabled: false

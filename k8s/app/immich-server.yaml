@@ -29,7 +29,7 @@ spec:
               mountPath: /data
       containers:
         - name: immich-server
-          image: ghcr.io/binti-p/immich-server-aesthetic:latest
+          image: ghcr.io/binti-p/immich-server-aesthetic:main
           env:
             # Immich Database Configuration
             - name: DB_HOSTNAME

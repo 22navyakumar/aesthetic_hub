@@ -27,7 +27,7 @@ spec:
               mountPath: /data
       containers:
         - name: immich-server
-          image: ghcr.io/immich-app/immich-server:release
+          image: ghcr.io/binti-p/immich-server:main
           env:
             - name: AESTHETIC_SERVICE_URL
               value: "http://aesthetic-service:8002"
