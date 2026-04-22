@@ -145,6 +145,12 @@ spec:
               value: "{{ .Values.minio.endpointUrl }}"
             - name: AWS_ENDPOINT_URL
               value: "{{ .Values.minio.endpointUrl }}"
+            - name: S3_ENDPOINT
+              value: "minio.platform.svc.cluster.local:9000"
+            - name: S3_USE_HTTPS
+              value: "0"
+            - name: S3_VERIFY_SSL
+              value: "0"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http
