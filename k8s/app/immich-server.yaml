@@ -90,7 +90,7 @@ spec:
           
           livenessProbe:
             httpGet:
-              path: /api/server-info/ping
+              path: /api/server/ping
               port: 2283
             initialDelaySeconds: 30
             periodSeconds: 15
@@ -99,7 +99,7 @@ spec:
           
           readinessProbe:
             httpGet:
-              path: /api/server-info/ping
+              path: /api/server/ping
               port: 2283
             initialDelaySeconds: 10
             periodSeconds: 10
