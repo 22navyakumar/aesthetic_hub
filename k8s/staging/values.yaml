@@ -2,15 +2,15 @@ replicaCount: 1
 
 immichServer:
   image:
-    repository: ghcr.io/binti-p/immich-server-aesthetic
-    tag: latest
+    repository: ghcr.io/binti-p/immich-server
+    tag: main
   url: 'http://immich-server.aesthetic-hub.svc.cluster.local:2283'
 
 aestheticService:
   image:
     repository: ghcr.io/binti-p/aesthetic-service
-    tag: '05874a393dbbe73048acc7b13bb69f6527734c4a'
-    pullPolicy: IfNotPresent
+    tag: main
+    pullPolicy: Always
   port: 8000
 
 postgres:

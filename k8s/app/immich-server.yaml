@@ -18,6 +18,7 @@ spec:
       containers:
         - name: immich-server
           image: ghcr.io/binti-p/immich-server:main
+          imagePullPolicy: Always
           env:
             # Immich Database Configuration
             - name: DB_HOSTNAME
@@ -90,7 +91,7 @@ spec:
           
           livenessProbe:
             httpGet:
-              path: /api/server/ping
+              path: /api/server-info/ping
               port: 2283
             initialDelaySeconds: 30
             periodSeconds: 15
