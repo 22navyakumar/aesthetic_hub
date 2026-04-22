@@ -19,10 +19,16 @@ spec:
               mc mb --ignore-existing minio/mlflow-artifacts
               mc mb --ignore-existing minio/triton-models
               echo keep > /tmp/.keep
-              mc cp /tmp/.keep minio/triton-models/staging/.keep
-              mc cp /tmp/.keep minio/triton-models/canary/.keep
-              mc cp /tmp/.keep minio/triton-models/production/.keep
+              for stage in staging canary production; do
+                mc cp /tmp/.keep "minio/triton-models/${stage}/.keep"
+                mc cp /models/global_mlp/1/model.onnx "minio/triton-models/${stage}/global_mlp/1/model.onnx"
+                mc cp /models/global_mlp/config.pbtxt "minio/triton-models/${stage}/global_mlp/config.pbtxt"
+                mc cp /models/personalized_mlp/1/model.onnx "minio/triton-models/${stage}/personalized_mlp/1/model.onnx"
+                mc cp /models/personalized_mlp/config.pbtxt "minio/triton-models/${stage}/personalized_mlp/config.pbtxt"
+              done
+              mc cp /models/personalized_mlp/1/model.onnx minio/triton-models/models/global/personalized_mlp.onnx
               mc ls minio
+              mc ls --recursive minio/triton-models
           env:
             - name: MINIO_ROOT_USER
               valueFrom:
@@ -44,4 +50,15 @@ spec:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
+          volumeMounts:
+            - name: triton-models
+              mountPath: /models
+              readOnly: true
+      nodeSelector:
+        kubernetes.io/hostname: node1
+      volumes:
+        - name: triton-models
+          hostPath:
+            path: /home/cc/aesthetic_hub/triton-models
+            type: Directory
       restartPolicy: OnFailure

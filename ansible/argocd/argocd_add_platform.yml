@@ -22,11 +22,38 @@
       - aesthetic-hub-staging
       - aesthetic-hub-canary
       - argo
+    repo_root: "/home/cc/aesthetic_hub"
     minio_access_key: "minioadmin"
     postgres_username: "mlflow"
     postgres_db: "mlflowdb"
 
   tasks:
+    - name: Clone or update aesthetic_hub repo on node1 for platform bootstrap assets
+      git:
+        repo: "{{ repo_path }}"
+        dest: "{{ repo_root }}"
+        version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
+        force: yes
+      become_user: cc
+
+    - name: Verify Triton model bootstrap assets exist on node1
+      stat:
+        path: "{{ repo_root }}/triton-models/{{ item }}"
+      loop:
+        - global_mlp/1/model.onnx
+        - global_mlp/config.pbtxt
+        - personalized_mlp/1/model.onnx
+        - personalized_mlp/config.pbtxt
+      register: triton_model_assets
+
+    - name: Fail if Triton model bootstrap assets are missing
+      fail:
+        msg: >-
+          Missing {{ repo_root }}/triton-models model files. Copy triton-models/
+          into aesthetic_hub and run this playbook with BRANCH set to the branch
+          Argo deploys, for example BRANCH=combined.
+      when: triton_model_assets.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
     - name: Get ArgoCD admin password from Kubernetes secret
       command: >
         kubectl get secret -n argocd argocd-initial-admin-secret \
