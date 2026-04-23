@@ -31,7 +31,7 @@ spec:
       - name: observation-minutes
         value: '30'
       - name: serving-image
-        value: 'ghcr.io/binti-p/aesthetic-service:05874a393dbbe73048acc7b13bb69f6527734c4a'
+        value: 'ghcr.io/binti-p/aesthetic-service:main'
 
   templates:
     - name: serving-pipeline
