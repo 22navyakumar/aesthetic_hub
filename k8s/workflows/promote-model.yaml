@@ -58,7 +58,7 @@ spec:
         parameters:
           - name: to-stage
       container:
-        image: argoproj/argocd:v2.10.4
+        image: quay.io/argoproj/argocd:v2.10.4
         command: [sh, -c]
         args:
           - |
