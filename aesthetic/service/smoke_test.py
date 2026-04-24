@@ -73,10 +73,14 @@ def seed_test_data():
             # Ensure test asset exists
             cur.execute(
                 """
-                INSERT INTO asset (id, "ownerId", type, "originalPath", "createdAt", "updatedAt",
-                                   "deviceAssetId", "deviceId", "originalFileName")
-                VALUES (%s::uuid, %s::uuid, 'IMAGE', '/smoke/test.jpg', NOW(), NOW(),
-                        'smoke-device-asset', 'smoke-device', 'test.jpg')
+                INSERT INTO asset (id, "ownerId", type, "originalPath",
+                                   "fileCreatedAt", "fileModifiedAt",
+                                   "createdAt", "updatedAt",
+                                   checksum, "originalFileName")
+                VALUES (%s::uuid, %s::uuid, 'IMAGE', '/smoke/test.jpg',
+                        NOW(), NOW(),
+                        NOW(), NOW(),
+                        E'\\\\x00', 'test.jpg')
                 ON CONFLICT (id) DO NOTHING
                 """,
                 (TEST_ASSET_ID, TEST_USER_ID),
