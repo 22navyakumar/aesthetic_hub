@@ -7,52 +7,43 @@ spec:
   backoffLimit: 3
   template:
     spec:
-      containers:
-        - name: bucket-init
-          image: minio/mc:latest
+      initContainers:
+        - name: wait-for-minio
+          image: curlimages/curl:latest
           command: ["/bin/sh", "-c"]
           args:
             - |
-              set -e
-              mc alias set minio http://minio.platform.svc.cluster.local:9000 "$AWS_ACCESS_KEY_ID" "$AWS_SECRET_ACCESS_KEY"
-              mc mb --ignore-existing minio/aesthetic-hub-data
-              mc mb --ignore-existing minio/mlflow-artifacts
-              mc mb --ignore-existing minio/triton-models
-              echo keep > /tmp/.keep
-              for stage in staging canary production; do
-                mc cp /tmp/.keep "minio/triton-models/${stage}/.keep"
-                mc cp /models/global_mlp/1/model.onnx "minio/triton-models/${stage}/global_mlp/1/model.onnx"
-                mc cp /models/global_mlp/config.pbtxt "minio/triton-models/${stage}/global_mlp/config.pbtxt"
-                mc cp /models/personalized_mlp/1/model.onnx "minio/triton-models/${stage}/personalized_mlp/1/model.onnx"
-                mc cp /models/personalized_mlp/config.pbtxt "minio/triton-models/${stage}/personalized_mlp/config.pbtxt"
+              until curl -f http://minio.platform.svc.cluster.local:9000/minio/health/live; do
+                echo "Waiting for MinIO to be ready..."
+                sleep 5
               done
-              mc cp /models/personalized_mlp/1/model.onnx minio/triton-models/models/global/personalized_mlp.onnx
-              mc ls minio
-              mc ls --recursive minio/triton-models
+              echo "MinIO is ready!"
+      containers:
+        - name: bucket-init
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "Installing dependencies..."
+              pip install --quiet minio pyarrow
+              echo "Running bucket initialization..."
+              python3 -m pipelines.batch.bucket_init
           env:
+            - name: MINIO_HOST
+              value: "minio.platform.svc.cluster.local:9000"
             - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: accesskey
+              value: "minioadmin"
             - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: secretkey
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: accesskey
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: secretkey
+              value: "minioadmin"
+            - name: PYTHONPATH
+              value: "/pipelines"
           volumeMounts:
             - name: triton-models
-              mountPath: /models
+              mountPath: /triton-models
+              readOnly: true
+            - name: pipelines
+              mountPath: /pipelines
               readOnly: true
       nodeSelector:
         kubernetes.io/hostname: node1
@@ -60,5 +51,9 @@ spec:
         - name: triton-models
           hostPath:
             path: /home/cc/aesthetic_hub/triton-models
+            type: Directory
+        - name: pipelines
+          hostPath:
+            path: /home/cc/aesthetic_hub/aesthetic/pipelines
             type: Directory
       restartPolicy: OnFailure
