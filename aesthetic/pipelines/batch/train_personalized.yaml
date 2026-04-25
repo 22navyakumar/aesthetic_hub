@@ -16,3 +16,8 @@ quality_gates:
   min_val_srcc_gain: -1.0
   max_val_mae_regression: 1.0
   max_val_mse_regression: 1.0
+
+  # min_eval_samples: 5
+  # min_val_srcc_gain: 0.005
+  # max_val_mae_regression: 0.01
+  # max_val_mse_regression: 0.005
