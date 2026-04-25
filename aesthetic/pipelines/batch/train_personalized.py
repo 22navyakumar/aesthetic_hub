@@ -136,7 +136,6 @@ def active_model_version(conn) -> str | None:
             FROM model_versions
             WHERE "activatedAt" IS NOT NULL
               AND "deactivatedAt" IS NULL
-              AND "isColdStart" = false
             ORDER BY "activatedAt" DESC
             LIMIT 1
             """
