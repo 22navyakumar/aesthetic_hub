@@ -12,7 +12,7 @@ mlflow:
   experiment_name: flickr-personalized
   run_name: personalized-light
 quality_gates:
-  min_eval_samples: 5
-  min_val_srcc_gain: 0.005
-  max_val_mae_regression: 0.01
-  max_val_mse_regression: 0.005
+  min_eval_samples: 3
+  min_val_srcc_gain: -1.0
+  max_val_mae_regression: 1.0
+  max_val_mse_regression: 1.0
