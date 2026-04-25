@@ -66,8 +66,13 @@ spec:
                 - name: to-stage
                   value: 'Production'
 
-          - name: rescore-active-users
+          - name: sync-user-embeddings
             dependencies: [promote-canary-to-production]
+            template: run-sync-embeddings
+            when: '{{tasks.observe-canary.outputs.parameters.canary-decision}} == promote'
+
+          - name: rescore-active-users
+            dependencies: [sync-user-embeddings]
             template: run-rescore
             when: '{{tasks.observe-canary.outputs.parameters.canary-decision}} == promote'
 
@@ -166,6 +171,104 @@ spec:
         env:
           - name: POSTGRES_HOST
             value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_DB
+            value: 'immich'
+          - name: POSTGRES_USER
+            value: 'immich'
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: immich-postgres-secret
+                key: password
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+
+    - name: run-sync-embeddings
+      container:
+        image: '{{workflow.parameters.serving-image}}'
+        command: [python, -c]
+        args:
+          - |
+            import boto3, os, io, json, psycopg2, psycopg2.extras
+            import pyarrow.parquet as pq
+            from botocore.client import Config
+
+            s3 = boto3.client(
+                "s3",
+                endpoint_url=os.environ["AWS_ENDPOINT_URL"],
+                aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+                aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+                config=Config(signature_version="s3v4"),
+                region_name="us-east-1",
+            )
+
+            # Find latest model version
+            bucket = "aesthetic-hub-data"
+            resp = s3.list_objects_v2(Bucket=bucket, Prefix="models/v", Delimiter="/")
+            versions = sorted(
+                [cp["Prefix"].rstrip("/").split("/")[-1]
+                 for cp in resp.get("CommonPrefixes", [])
+                 if cp["Prefix"].rstrip("/").split("/")[-1].startswith("v")],
+                reverse=True,
+            )
+            if not versions:
+                raise RuntimeError("No model versions found")
+            latest = versions[0]
+            print(f"Latest model version: {latest}")
+
+            # Download user_embeddings.parquet
+            key = f"models/{latest}/user_embeddings.parquet"
+            obj = s3.get_object(Bucket=bucket, Key=key)
+            df = pq.read_table(io.BytesIO(obj["Body"].read())).to_pandas()
+            print(f"Loaded {len(df)} user embeddings from s3://{bucket}/{key}")
+
+            # Upsert into Postgres
+            conn = psycopg2.connect(
+                host=os.environ["POSTGRES_HOST"],
+                port=os.environ.get("POSTGRES_PORT", "5432"),
+                dbname=os.environ["POSTGRES_DB"],
+                user=os.environ["POSTGRES_USER"],
+                password=os.environ["POSTGRES_PASSWORD"],
+            )
+            try:
+                with conn.cursor() as cur:
+                    upserted = 0
+                    for _, row in df.iterrows():
+                        cur.execute(
+                            """
+                            INSERT INTO user_embeddings ("userId", embedding, "modelVersion", "updatedAt")
+                            VALUES (%s::uuid, %s::double precision[], %s, NOW())
+                            ON CONFLICT ("userId") DO UPDATE SET
+                                embedding = EXCLUDED.embedding,
+                                "modelVersion" = EXCLUDED."modelVersion",
+                                "updatedAt" = NOW()
+                            """,
+                            (str(row["user_id"]), list(row["embedding"]), latest),
+                        )
+                        upserted += 1
+                conn.commit()
+                print(f"Upserted {upserted} user embeddings into Postgres")
+            finally:
+                conn.close()
+        env:
+          - name: AWS_ENDPOINT_URL
+            value: '{{workflow.parameters.minio-endpoint}}'
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: accesskey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: minio-credentials
+                key: secretkey
+          - name: POSTGRES_HOST
+            value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_PORT
+            value: '5432'
           - name: POSTGRES_DB
             value: 'immich'
           - name: POSTGRES_USER
