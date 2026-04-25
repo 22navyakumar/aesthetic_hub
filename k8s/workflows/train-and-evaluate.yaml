@@ -87,6 +87,7 @@ spec:
         args:
           - |
             python -m pipelines.batch.pipeline
+            python -m pipelines.batch.train_personalized
             python -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))" > /tmp/run-id.txt
         env:
           - name: MLFLOW_TRACKING_URI
