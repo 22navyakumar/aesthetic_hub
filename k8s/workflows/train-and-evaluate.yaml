@@ -88,7 +88,7 @@ spec:
           - |
             python -m pipelines.batch.pipeline
             TODAY=$(python -c "from datetime import datetime, timezone; print(datetime.now(timezone.utc).strftime('%Y-%m-%d'))")
-            python -m pipelines.batch.train_personalized --dataset-version "v${TODAY}"
+            python -m pipelines.batch.train_personalized --dataset-version "${TODAY}"
             echo "$TODAY" > /tmp/run-id.txt
         env:
           - name: MLFLOW_TRACKING_URI
