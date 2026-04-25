@@ -74,6 +74,10 @@ spec:
               parameters:
                 - name: run-id
                   value: '{{tasks.train.outputs.parameters.run-id}}'
+          - name: trigger-promote-serving
+            template: trigger-promote-serving
+            dependencies: [serving-quality-gate]
+            when: '{{tasks.evaluate.outputs.parameters.gates-passed}} == true'
 
     - name: train-model
       outputs:
@@ -353,3 +357,20 @@ spec:
           limits:
             cpu: '2'
             memory: 2Gi
+
+    - name: trigger-promote-serving
+      resource:
+        action: create
+        manifest: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Workflow
+          metadata:
+            generateName: promote-serving-auto-
+            namespace: argo
+          spec:
+            workflowTemplateRef:
+              name: promote-serving
+            arguments:
+              parameters:
+                - name: serving-image
+                  value: "{{workflow.parameters.serving-image}}"
