@@ -333,6 +333,19 @@ spec:
               secretKeyRef:
                 name: minio-credentials
                 key: secretkey
+          - name: POSTGRES_HOST
+            value: 'immich-postgres.aesthetic-hub.svc.cluster.local'
+          - name: POSTGRES_PORT
+            value: '5432'
+          - name: POSTGRES_DB
+            value: 'immich'
+          - name: POSTGRES_USER
+            value: 'immich'
+          - name: POSTGRES_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: immich-postgres-secret
+                key: password
         resources:
           requests:
             cpu: 500m
