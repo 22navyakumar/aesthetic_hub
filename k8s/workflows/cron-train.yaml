@@ -11,7 +11,7 @@ metadata:
   labels:
     app.kubernetes.io/part-of: aesthetic-hub
 spec:
-  schedule: "0 2 * * 0"
+  schedule: "30 2 * * 0"
   timezone: "UTC"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600

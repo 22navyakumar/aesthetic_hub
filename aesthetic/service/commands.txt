@@ -1,0 +1,162 @@
+# 4. Once disk pressure clears, restart the rollout fresh
+kubectl rollout restart deployment/aesthetic-service-staging -n aesthetic-hub-staging
+kubectl rollout status deployment/aesthetic-service-staging -n aesthetic-hub-staging
+
+#create
+kubectl create -n argo -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: promote-serving-manual-
+spec:
+  workflowTemplateRef:
+    name: promote-serving
+  arguments:
+    parameters:
+      - name: serving-image
+        value: ghcr.io/binti-p/aesthetic-service:main
+EOF
+
+
+
+# Get the workflow name
+WF=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp \
+  -o jsonpath='{.items[-1:].metadata.name}')
+echo "$WF"
+
+# Watch status in real time
+kubectl get workflow "$WF" -n argo -w
+
+
+# All pod logs for this workflow
+kubectl logs -n argo -l workflows.argoproj.io/workflow=$WF --all-containers --tail=200
+
+
+--------- changes to promote.py only add user embeddings when model canary -> production -------------
+
+kubectl rollout restart deployment/aesthetic-service -n aesthetic-hub
+kubectl rollout status deployment/aesthetic-service -n aesthetic-hub
+
+kubectl delete pod -n aesthetic-hub -l app=aesthetic-service --force
+kubectl rollout status deployment/aesthetic-service -n aesthetic-hub
+
+
+kubectl create -n argo -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: train-and-evaluate-manual-
+spec:
+  workflowTemplateRef:
+    name: train-and-evaluate
+  arguments:
+    parameters:
+      - name: training-image
+        value: ghcr.io/binti-p/aesthetic-service:main
+      - name: serving-image
+        value: ghcr.io/binti-p/aesthetic-service:main
+EOF
+
+WF=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+echo "$WF"
+kubectl get workflow "$WF" -n argo -w
+
+in another window:
+kubectl logs -n argo -l workflows.argoproj.io/workflow=train-and-evaluate-manual-wshsh -c main --tail=150
+
+
+
+# Check which node it's stuck on
+kubectl get pods -n aesthetic-hub -l app=aesthetic-service -o wide
+
+# Force delete the stuck pod
+kubectl delete pod -n aesthetic-hub -l app=aesthetic-service --force
+
+# Clean images on the node if needed
+ssh node3 "sudo crictl rmi --prune"
+
+# Then the deployment will recreate the pod
+kubectl rollout status deployment/aesthetic-service -n aesthetic-hub
+
+
+
+
+# 1. Submit train-and-evaluate (this will auto-trigger promote-serving on success)
+kubectl create -n argo -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: train-and-evaluate-e2e-
+spec:
+  workflowTemplateRef:
+    name: train-and-evaluate
+  arguments:
+    parameters:
+      - name: training-image
+        value: ghcr.io/binti-p/aesthetic-service:main
+      - name: serving-image
+        value: ghcr.io/binti-p/aesthetic-service:main
+EOF
+
+# 2. Watch train-and-evaluate
+WF=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+echo "Train workflow: $WF"
+kubectl get workflow "$WF" -n argo -w
+
+# 3. Once it completes, check if promote-serving was auto-triggered
+kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp | tail -5
+
+# 4. Watch promote-serving (it'll have "promote-serving-auto-" prefix)
+PW=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+echo "Promote workflow: $PW"
+kubectl get workflow "$PW" -n argo -w
+
+# 5. Logs anytime
+kubectl logs -n argo -l workflows.argoproj.io/workflow=$WF -c main --tail=100   # train logs
+kubectl logs -n argo -l workflows.argoproj.io/workflow=$PW -c main --tail=100   # promote logs
+
+# 6. Check sub-workflows (promote-model gets spawned by promote-serving)
+kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp | tail -10
+
+
+
+
+
+
+
+# Immich server (receives uploads)
+kubectl logs -f deploy/immich-server -n aesthetic-hub --tail=20
+
+# ML service (CLIP embeddings)
+kubectl logs -f deploy/immich-machine-learning -n aesthetic-hub --tail=20
+
+# Aesthetic service (scoring)
+kubectl logs -f deploy/aesthetic-service -n aesthetic-hub --tail=20
+
+# Quick counts
+kubectl exec -n aesthetic-hub immich-postgres-0 -- psql -U immich -d immich -c "SELECT COUNT(*) as assets FROM asset"
+kubectl exec -n aesthetic-hub immich-postgres-0 -- psql -U immich -d immich -c "SELECT COUNT(*) as scores FROM aesthetic_scores"
+kubectl exec -n aesthetic-hub immich-postgres-0 -- psql -U immich -d immich -c "SELECT COUNT(*) as embeddings FROM smart_search"
+
+
+
+kubectl exec -it deploy/aesthetic-service -n aesthetic-hub -- python -m pipelines.batch.simulate_interactions \
+  --worker-api-keys-csv /app/pipelines/batch/worker_api_keys.csv \
+  --server-url http://immich-server.aesthetic-hub.svc.cluster.local:2283 \
+  --asset-limit 60 \
+  --cycles 3 \
+  --batch-size 10
+
+
+# Verify cron is scheduled
+kubectl get cronworkflows -n argo
+
+# After 10 PM NYC, check if it created a workflow
+kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp | tail -5
+
+# Watch for new workflows in real time
+kubectl get workflows -n argo -w
+
+WF=$(kubectl get workflows -n argo --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+kubectl get workflow "$WF" -n argo -w
+kubectl logs -n argo -l workflows.argoproj.io/workflow=$WF -c main --tail=100
