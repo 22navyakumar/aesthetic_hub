@@ -14,8 +14,8 @@
   hosts: node1
   become: yes
   vars:
-    repo_root: /home/cc/immich
-    monitoring_dir: "{{ repo_root }}/deploy/k8s/monitoring"
+    repo_root: /home/cc/aesthetic_hub
+    monitoring_dir: "{{ repo_root }}/k8s/monitoring"
     grafana_admin_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
 
   tasks:
@@ -59,41 +59,19 @@
         msg: "Grafana admin password (SAVE THIS): {{ grafana_admin_password }}"
 
     # ----------------------------------------------------------------
-    # 4. Create MLflow PostgreSQL credentials secret
-    # ----------------------------------------------------------------
-    - name: Check if mlflow-postgres-credentials exists
-      command: kubectl get secret mlflow-postgres-credentials -n platform
-      register: mlflow_pg_secret_check
-      failed_when: false
-      changed_when: false
-
-    - name: Generate MLflow postgres password
-      when: mlflow_pg_secret_check.rc != 0
-      set_fact:
-        mlflow_pg_password: "{{ lookup('password', '/dev/null length=20 chars=ascii_letters,digits') }}"
-
-    - name: Create MLflow postgres credentials secret
-      when: mlflow_pg_secret_check.rc != 0
-      command: >
-        kubectl create secret generic mlflow-postgres-credentials
-        --namespace platform
-        --from-literal=username=mlflow
-        --from-literal=password={{ mlflow_pg_password }}
-
-    # ----------------------------------------------------------------
-    # 5. Deploy node-exporter
+    # 4. Deploy node-exporter
     # ----------------------------------------------------------------
     - name: Apply node-exporter DaemonSet
       command: kubectl apply -f {{ monitoring_dir }}/node-exporter-daemonset.yaml
 
     # ----------------------------------------------------------------
-    # 6. Deploy kube-state-metrics
+    # 5. Deploy kube-state-metrics
     # ----------------------------------------------------------------
     - name: Apply kube-state-metrics
       command: kubectl apply -f {{ monitoring_dir }}/kube-state-metrics.yaml
 
     # ----------------------------------------------------------------
-    # 7. Deploy Prometheus
+    # 6. Deploy Prometheus
     # ----------------------------------------------------------------
     - name: Apply Prometheus RBAC
       command: kubectl apply -f {{ monitoring_dir }}/prometheus-rbac.yaml
@@ -101,11 +79,14 @@
     - name: Apply Prometheus ConfigMap
       command: kubectl apply -f {{ monitoring_dir }}/prometheus-configmap.yaml
 
+    - name: Apply Prometheus alert rules ConfigMap
+      command: kubectl apply -f {{ monitoring_dir }}/alert-rules.yaml
+
     - name: Apply Prometheus Deployment + Service + PVC
       command: kubectl apply -f {{ monitoring_dir }}/prometheus-deployment.yaml
 
     # ----------------------------------------------------------------
-    # 8. Deploy AlertManager
+    # 7. Deploy AlertManager
     # ----------------------------------------------------------------
     - name: Apply AlertManager ConfigMap
       command: kubectl apply -f {{ monitoring_dir }}/alertmanager-configmap.yaml
@@ -114,7 +95,7 @@
       command: kubectl apply -f {{ monitoring_dir }}/alertmanager-deployment.yaml
 
     # ----------------------------------------------------------------
-    # 9. Deploy Grafana
+    # 8. Deploy Grafana
     # ----------------------------------------------------------------
     - name: Apply Grafana ConfigMaps (datasource + dashboards)
       command: kubectl apply -f {{ monitoring_dir }}/grafana-configmap.yaml
@@ -123,7 +104,7 @@
       command: kubectl apply -f {{ monitoring_dir }}/grafana-deployment.yaml
 
     # ----------------------------------------------------------------
-    # 10. Wait for pods to be ready
+    # 9. Wait for pods to be ready
     # ----------------------------------------------------------------
     - name: Wait for Prometheus to be ready
       shell: |
@@ -146,35 +127,13 @@
       retries: 3
       delay: 10
 
-    # ----------------------------------------------------------------
-    # 11. Deploy MLflow (platform service)
-    # ----------------------------------------------------------------
-    - name: Apply MLflow deployment (PostgreSQL + MLflow server)
-      command: kubectl apply -f {{ repo_root }}/k8s/platform/mlflow.yaml
-
-    - name: Wait for MLflow Postgres to be ready
-      shell: |
-        kubectl rollout status deployment/mlflow-postgres -n platform --timeout=120s
-      retries: 3
-      delay: 15
-
-    - name: Wait for MLflow to be ready
-      shell: |
-        kubectl rollout status deployment/mlflow -n platform --timeout=180s
-      retries: 3
-      delay: 20
-
-    # ----------------------------------------------------------------
-    # 12. Deploy HPA autoscaling
+    # 10. Deploy HPA autoscaling
     # ----------------------------------------------------------------
     - name: Apply HPA for Immich Server
       command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-server.yaml
 
-    - name: Apply HPA for Immich Web
-      command: kubectl apply -f {{ repo_root }}/k8s/autoscaling/hpa-immich-web.yaml
-
     # ----------------------------------------------------------------
-    # 13. Apply Argo Workflow RBAC + templates
+    # 11. Apply Argo Workflow RBAC + templates
     # ----------------------------------------------------------------
     - name: Apply Argo Workflow RBAC
       command: kubectl apply -f {{ repo_root }}/k8s/workflows/argo-workflow-rbac.yaml
@@ -192,7 +151,7 @@
       command: kubectl apply -f {{ repo_root }}/k8s/workflows/event-trigger.yaml
 
     # ----------------------------------------------------------------
-    # 14. Create namespaces for staging and canary environments
+    # 12. Create namespaces for staging and canary environments
     # ----------------------------------------------------------------
     - name: Create aesthetic-hub-staging namespace
       command: kubectl create namespace aesthetic-hub-staging
@@ -207,20 +166,18 @@
       changed_when: "'created' in canary_ns.stdout"
 
     # ----------------------------------------------------------------
-    # 15. Print service endpoints
+    # 13. Print service endpoints
     # ----------------------------------------------------------------
     - name: Get node external IP
-      shell: |
-        kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}'
-      register: node_ip
-      changed_when: false
+      set_fact:
+        node_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
 
     - name: Print monitoring service endpoints
       debug:
         msg:
           - "=== Monitoring Endpoints ==="
-          - "Prometheus:    http://{{ node_ip.stdout }}:30090"
-          - "AlertManager:  http://{{ node_ip.stdout }}:30093"
-          - "Grafana:       http://{{ node_ip.stdout }}:30030  (admin / <see above>)"
-          - "MLflow:        http://{{ node_ip.stdout }}:30500"
+          - "Prometheus:    http://{{ node_ip }}:30090"
+          - "AlertManager:  http://{{ node_ip }}:30093"
+          - "Grafana:       http://{{ node_ip }}:30030  (admin / <see above>)"
+          - "MLflow:        http://{{ node_ip }}:30500"
           - "==========================="

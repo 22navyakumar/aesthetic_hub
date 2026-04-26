@@ -364,7 +364,7 @@ data:
               severity: warning
             annotations:
               summary: "Argo Workflow has failed"
-              description: "One or more Argo Workflows are in a Failed state. Check the Argo UI at http://129.114.27.253:2746"
+              description: "One or more Argo Workflows are in a Failed state. Check the Argo UI on the Chameleon floating IP."
 
           - alert: ArgoWorkflowRunningTooLong
             expr: argo_workflows_count{status="Running"} > 0 and argo_workflow_info{phase="Running"} * on() (time() - argo_workflow_info{phase="Running"}) > 7200

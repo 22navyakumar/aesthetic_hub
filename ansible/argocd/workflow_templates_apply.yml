@@ -5,26 +5,34 @@
   vars:
     repo_url: https://github.com/22navyakumar/aesthetic_hub.git
     repo_dest: /tmp/aesthetic_hub
-    workflow_dir: workflows
+    workflow_dir: k8s/workflows
     argo_namespace: argo
-    templates:
-      - build-container-image.yaml
-      - deploy-container-image.yaml
-      - promote-model.yaml
-      - train-model.yaml
-      - test-staging.yaml
+    argo_events_namespace: argo-events
+    workflow_manifests:
+      - argo-workflow-rbac.yaml
       - cron-train.yaml
+      - promote-model.yaml
+      - promote-serving.yaml
+      - train-and-evaluate.yaml
+    event_manifests:
+      - event-trigger.yaml
 
   tasks:
     - name: Clone or update aesthetic_hub repo
       git:
         repo: "{{ repo_url }}"
         dest: "{{ repo_dest }}"
-        version: main
+        version: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
 
-    - name: Apply selected WorkflowTemplates to Argo namespace
-      command: kubectl apply -n {{ argo_namespace }} -f {{ repo_dest }}/{{ workflow_dir }}/{{ item }}
-      loop: "{{ templates }}"
+    - name: Apply selected workflow manifests
+      command: kubectl apply -f {{ repo_dest }}/{{ workflow_dir }}/{{ item }}
+      loop: "{{ workflow_manifests }}"
+      loop_control:
+        label: "{{ item }}"
+
+    - name: Apply selected Argo Events manifests
+      command: kubectl apply -f {{ repo_dest }}/{{ workflow_dir }}/{{ item }}
+      loop: "{{ event_manifests }}"
       loop_control:
         label: "{{ item }}"
 

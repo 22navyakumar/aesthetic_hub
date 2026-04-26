@@ -35,7 +35,10 @@ spec:
             - name: POSTGRES_USER
               value: "{{ .Values.postgres.user }}"
             - name: POSTGRES_PASSWORD
-              value: "immich"
+              valueFrom:
+                secretKeyRef:
+                  name: immich-postgres-secret
+                  key: password
             - name: AWS_ENDPOINT_URL
               value: "{{ .Values.minio.endpointUrl }}"
             - name: AWS_ACCESS_KEY_ID
@@ -49,9 +52,19 @@ spec:
                   name: minio-credentials
                   key: secretkey
             - name: MINIO_BUCKET
-              value: "{{ .Values.minio.bucket }}"
+              value: "{{ .Values.minio.dataBucket }}"
+            - name: MINIO_TRITON_BUCKET
+              value: "{{ .Values.minio.tritonBucket }}"
             - name: MODEL_STAGE
               value: "{{ .Values.minio.modelStage }}"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow.platform.svc.cluster.local:5000"
+            - name: MLFLOW_S3_ENDPOINT_URL
+              value: "{{ .Values.minio.endpointUrl }}"
+            - name: INTERACTION_FLUSH_SIZE
+              value: "100"
+            - name: INFERENCE_FLUSH_SIZE
+              value: "50"
             - name: IMMICH_SERVER_URL
               value: "{{ .Values.immichServer.url }}"
             - name: USE_TRITON
@@ -126,6 +139,12 @@ spec:
               value: "{{ .Values.minio.endpointUrl }}"
             - name: AWS_ENDPOINT_URL
               value: "{{ .Values.minio.endpointUrl }}"
+            - name: S3_ENDPOINT
+              value: "minio.platform.svc.cluster.local:9000"
+            - name: S3_USE_HTTPS
+              value: "0"
+            - name: S3_VERIFY_SSL
+              value: "0"
           ports:
             - containerPort: {{ .Values.triton.port }}
               name: http

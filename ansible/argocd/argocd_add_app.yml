@@ -1,0 +1,132 @@
+---
+- name: Deploy base Immich app via ArgoCD with runtime secret handling
+  hosts: node1
+  become: yes
+  vars:
+    argocd_username: "admin"
+    repo_path: "https://github.com/22navyakumar/aesthetic_hub.git"
+    app_name: "aes-immich-app"
+    app_path: "k8s/app"
+    app_namespace: "aesthetic-hub"
+    postgres_secret_namespaces:
+      - argo
+      - aesthetic-hub-staging
+      - aesthetic-hub-canary
+
+  tasks:
+    - name: Get ArgoCD admin password from Kubernetes secret
+      command: >
+        kubectl get secret -n argocd argocd-initial-admin-secret
+        -o jsonpath="{.data.password}"
+      register: argocd_password_base64
+      changed_when: false
+
+    - name: Decode ArgoCD admin password
+      shell: echo {{ argocd_password_base64.stdout }} | base64 --decode
+      register: argocd_password
+      changed_when: false
+
+    - name: Log in to ArgoCD
+      command: >
+        argocd login localhost --username {{ argocd_username }}
+        --password "{{ argocd_password.stdout }}" --grpc-web --port-forward --port-forward-namespace=argocd
+      changed_when: false
+
+    - name: Ensure app namespace exists
+      command: kubectl create namespace {{ app_namespace }}
+      register: ns_create
+      failed_when: ns_create.rc != 0 and "AlreadyExists" not in ns_create.stderr
+      changed_when: "'created' in ns_create.stdout"
+
+    - name: Check if Immich Postgres secret already exists
+      command: kubectl get secret immich-postgres-secret -n {{ app_namespace }}
+      register: immich_secret_check
+      failed_when: false
+      changed_when: false
+
+    - name: Generate Immich Postgres password
+      when: immich_secret_check.rc != 0
+      set_fact:
+        immich_postgres_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+
+    - name: Create Immich Postgres secret
+      when: immich_secret_check.rc != 0
+      command: >
+        kubectl create secret generic immich-postgres-secret
+        --namespace {{ app_namespace }}
+        --from-literal=password={{ immich_postgres_password }}
+
+    - name: Ensure namespaces that need Immich Postgres credentials exist
+      command: kubectl create namespace {{ item }}
+      loop: "{{ postgres_secret_namespaces }}"
+      register: postgres_secret_ns_create
+      failed_when: postgres_secret_ns_create.rc != 0 and "AlreadyExists" not in postgres_secret_ns_create.stderr
+      changed_when: "'created' in postgres_secret_ns_create.stdout"
+
+    - name: Copy Immich Postgres secret to workflow and serving namespaces
+      shell: |
+        set -e
+        password="$(kubectl get secret immich-postgres-secret -n {{ app_namespace }} -o jsonpath='{.data.password}' | base64 --decode)"
+        kubectl create secret generic immich-postgres-secret \
+          --namespace {{ item }} \
+          --from-literal=password="$password" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
+      loop: "{{ postgres_secret_namespaces }}"
+
+    - name: Check if data pipeline secret already exists
+      command: kubectl get secret data-pipeline-postgres-secret -n {{ app_namespace }}
+      register: data_pipeline_secret_check
+      failed_when: false
+      changed_when: false
+
+    - name: Generate data pipeline passwords
+      when: data_pipeline_secret_check.rc != 0
+      set_fact:
+        data_pipeline_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+        immich_readonly_password: "{{ lookup('password', '/dev/null length=24 chars=ascii_letters,digits') }}"
+
+    - name: Create data pipeline secret
+      when: data_pipeline_secret_check.rc != 0
+      command: >
+        kubectl create secret generic data-pipeline-postgres-secret
+        --namespace {{ app_namespace }}
+        --from-literal=password={{ data_pipeline_password }}
+        --from-literal=immich_readonly_password={{ immich_readonly_password }}
+
+    - name: Check if ArgoCD app exists
+      command: argocd app get {{ app_name }} --port-forward --port-forward-namespace=argocd
+      register: app_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create ArgoCD app if missing
+      when: app_check.rc != 0
+      command: >
+        argocd app create {{ app_name }}
+        --repo {{ repo_path }}
+        --path {{ app_path }}
+        --dest-server https://kubernetes.default.svc
+        --dest-namespace {{ app_namespace }}
+        --sync-policy automated --self-heal
+        --port-forward --port-forward-namespace=argocd
+
+    - name: Update ArgoCD app if it exists
+      when: app_check.rc == 0
+      command: >
+        argocd app set {{ app_name }}
+        --repo {{ repo_path }}
+        --path {{ app_path }}
+        --dest-server https://kubernetes.default.svc
+        --dest-namespace {{ app_namespace }}
+        --port-forward --port-forward-namespace=argocd
+
+    - name: Display ArgoCD app status
+      command: argocd app get {{ app_name }} --port-forward --port-forward-namespace=argocd
+      register: final_status
+      changed_when: false
+
+    - name: Show final status
+      debug:
+        var: final_status.stdout
