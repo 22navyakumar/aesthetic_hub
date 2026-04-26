@@ -337,6 +337,89 @@ data:
             }
           ],
           "fieldConfig": {"defaults": {"unit": "s"}}
+        },
+        {
+          "id": 9,
+          "title": "Scoring Error Rate by Type",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+          "targets": [
+            {
+              "expr": "sum by(error_type) (rate(score_image_errors_total[5m]))",
+              "legendFormat": "{{error_type}}"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "id": 10,
+          "title": "Total Scores Per Hour",
+          "type": "stat",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+          "targets": [
+            {
+              "expr": "sum(increase(score_image_request_duration_seconds_count[1h]))",
+              "legendFormat": "scores/hour"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "blue", "value": null},
+                  {"color": "green", "value": 100}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": 11,
+          "title": "Score Range Breakdown (%)",
+          "type": "piechart",
+          "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+          "targets": [
+            {
+              "expr": "sum(rate(aesthetic_score_bucket{le=\"0.2\"}[5m]))",
+              "legendFormat": "0.0 - 0.2"
+            },
+            {
+              "expr": "sum(rate(aesthetic_score_bucket{le=\"0.4\"}[5m])) - sum(rate(aesthetic_score_bucket{le=\"0.2\"}[5m]))",
+              "legendFormat": "0.2 - 0.4"
+            },
+            {
+              "expr": "sum(rate(aesthetic_score_bucket{le=\"0.6\"}[5m])) - sum(rate(aesthetic_score_bucket{le=\"0.4\"}[5m]))",
+              "legendFormat": "0.4 - 0.6"
+            },
+            {
+              "expr": "sum(rate(aesthetic_score_bucket{le=\"0.8\"}[5m])) - sum(rate(aesthetic_score_bucket{le=\"0.6\"}[5m]))",
+              "legendFormat": "0.6 - 0.8"
+            },
+            {
+              "expr": "sum(rate(aesthetic_score_bucket{le=\"1.0\"}[5m])) - sum(rate(aesthetic_score_bucket{le=\"0.8\"}[5m]))",
+              "legendFormat": "0.8 - 1.0"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "short"}}
+        },
+        {
+          "id": 12,
+          "title": "Triton Inference Latency (ms)",
+          "type": "timeseries",
+          "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
+          "targets": [
+            {
+              "expr": "rate(nv_inference_request_duration_us_sum[5m]) / rate(nv_inference_request_duration_us_count[5m]) / 1000",
+              "legendFormat": "{{model}} avg (ms)"
+            },
+            {
+              "expr": "rate(nv_inference_queue_duration_us_sum[5m]) / rate(nv_inference_queue_duration_us_count[5m]) / 1000",
+              "legendFormat": "{{model}} queue (ms)"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "ms"}}
         }
       ]
     }
