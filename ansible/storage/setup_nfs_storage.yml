@@ -10,31 +10,26 @@
   hosts: node1
   become: yes
   vars:
-    volume_name: "aesthetic-hub-storage"
     mount_point: "/mnt/persistent"
     device: "/dev/vdb"
     
   tasks:
-    - name: Check if Chameleon volume exists
-      shell: openstack volume show {{ volume_name }}
-      delegate_to: localhost
-      become: no
-      register: volume_check
-      failed_when: false
-      changed_when: false
+    - name: Check if device exists
+      stat:
+        path: "{{ device }}"
+      register: device_stat
 
-    - name: Fail if volume doesn't exist
+    - name: Fail if device doesn't exist
       fail:
-        msg: "Volume '{{ volume_name }}' does not exist. Create it first: openstack volume create --size 250 {{ volume_name }}"
-      when: volume_check.rc != 0
-
-    - name: Attach Chameleon volume to node1
-      shell: openstack server add volume {{ inventory_hostname }} {{ volume_name }}
-      delegate_to: localhost
-      become: no
-      register: attach_result
-      failed_when: attach_result.rc != 0 and 'is already attached' not in attach_result.stderr
-      changed_when: "'is already attached' not in attach_result.stderr"
+        msg: |
+          Device '{{ device }}' not found on node1.
+          
+          Please attach the Chameleon volume first:
+          1. Via Chameleon web UI: Volumes → Manage Attachments → Attach to node1-mlops-pa2753
+          2. Or via CLI: openstack server add volume node1-mlops-pa2753 block-persist-proj21
+          
+          Then wait 30 seconds for the device to appear and rerun this playbook.
+      when: not device_stat.stat.exists
 
     - name: Wait for device to appear
       wait_for:
