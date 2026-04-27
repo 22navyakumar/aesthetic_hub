@@ -44,9 +44,7 @@
       changed_when: false
 
     - name: Format device as ext4 if not formatted
-      filesystem:
-        fstype: ext4
-        dev: "{{ device }}"
+      command: mkfs.ext4 {{ device }}
       when: blkid_result.rc != 0
 
     - name: Create mount point
