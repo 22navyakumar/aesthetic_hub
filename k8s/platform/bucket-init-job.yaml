@@ -51,8 +51,6 @@ spec:
             - name: pipelines
               mountPath: /pipelines
               readOnly: true
-      nodeSelector:
-        kubernetes.io/hostname: node1
       volumes:
         - name: triton-models
           hostPath:

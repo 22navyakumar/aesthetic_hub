@@ -1,19 +1,9 @@
 # MLflow tracking server with PostgreSQL backend and MinIO artifact storage.
 # Secrets must be pre-created; see ansible/argocd/argocd_add_platform.yml
 # which creates:  mlflow-postgres-credentials  and  minio-credentials
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mlflow-postgres-pvc
-  namespace: platform
-spec:
-  accessModes:
-    - ReadWriteOnce
-  storageClassName: local-path
-  resources:
-    requests:
-      storage: 5Gi
+#
+# NOTE: MLflow Postgres runs STATELESS (no PVC) - training history is lost on restart.
+# Model artifacts and metadata are stored in MinIO (persistent).
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -48,6 +38,8 @@ spec:
                 secretKeyRef:
                   name: mlflow-postgres-credentials
                   key: password
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
           ports:
             - containerPort: 5432
           resources:
@@ -57,9 +49,6 @@ spec:
             limits:
               cpu: 500m
               memory: 512Mi
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
           livenessProbe:
             exec:
               command: ["pg_isready", "-U", "mlflow"]
@@ -70,10 +59,6 @@ spec:
               command: ["pg_isready", "-U", "mlflow"]
             initialDelaySeconds: 5
             periodSeconds: 5
-      volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: mlflow-postgres-pvc
 ---
 apiVersion: v1
 kind: Service

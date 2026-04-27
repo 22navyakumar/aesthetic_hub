@@ -1,0 +1,210 @@
+---
+# Setup NFS-based persistent storage for multi-node K8s cluster
+# This playbook:
+# 1. Attaches Chameleon volume to node1
+# 2. Mounts volume at /mnt/persistent on node1
+# 3. Sets up NFS server on node1
+# 4. Mounts NFS share on node2 and node3
+
+- name: Setup NFS Server on node1
+  hosts: node1
+  become: yes
+  vars:
+    volume_name: "aesthetic-hub-storage"
+    mount_point: "/mnt/persistent"
+    device: "/dev/vdb"
+    
+  tasks:
+    - name: Check if Chameleon volume exists
+      shell: openstack volume show {{ volume_name }}
+      delegate_to: localhost
+      become: no
+      register: volume_check
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if volume doesn't exist
+      fail:
+        msg: "Volume '{{ volume_name }}' does not exist. Create it first: openstack volume create --size 250 {{ volume_name }}"
+      when: volume_check.rc != 0
+
+    - name: Attach Chameleon volume to node1
+      shell: openstack server add volume {{ inventory_hostname }} {{ volume_name }}
+      delegate_to: localhost
+      become: no
+      register: attach_result
+      failed_when: attach_result.rc != 0 and 'is already attached' not in attach_result.stderr
+      changed_when: "'is already attached' not in attach_result.stderr"
+
+    - name: Wait for device to appear
+      wait_for:
+        path: "{{ device }}"
+        state: present
+        timeout: 30
+
+    - name: Check if device is already formatted
+      command: blkid {{ device }}
+      register: blkid_result
+      failed_when: false
+      changed_when: false
+
+    - name: Format device as ext4 if not formatted
+      filesystem:
+        fstype: ext4
+        dev: "{{ device }}"
+      when: blkid_result.rc != 0
+
+    - name: Create mount point
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount Chameleon volume
+      mount:
+        path: "{{ mount_point }}"
+        src: "{{ device }}"
+        fstype: ext4
+        state: mounted
+        opts: defaults
+
+    - name: Create directories for PVCs
+      file:
+        path: "{{ mount_point }}/{{ item.dir }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: '0755'
+      loop:
+        - { dir: 'postgres', owner: '999', group: '999' }      # postgres user
+        - { dir: 'minio', owner: '1000', group: '1000' }       # minio user
+        - { dir: 'immich-upload', owner: '1000', group: '1000' } # node user
+
+    - name: Install NFS server
+      apt:
+        name: nfs-kernel-server
+        state: present
+        update_cache: yes
+
+    - name: Configure NFS exports
+      lineinfile:
+        path: /etc/exports
+        line: "{{ mount_point }} {{ hostvars[item].ansible_host }}(rw,sync,no_subtree_check,no_root_squash)"
+        create: yes
+      loop:
+        - node2
+        - node3
+
+    - name: Apply NFS exports
+      command: exportfs -ra
+
+    - name: Enable and start NFS server
+      systemd:
+        name: nfs-kernel-server
+        enabled: yes
+        state: started
+
+    - name: Show NFS exports
+      command: exportfs -v
+      register: exports_output
+      changed_when: false
+
+    - name: Display NFS exports
+      debug:
+        msg: "{{ exports_output.stdout_lines }}"
+
+- name: Setup NFS Clients on node2 and node3
+  hosts: node2,node3
+  become: yes
+  vars:
+    nfs_server: "{{ hostvars['node1'].ansible_host }}"
+    mount_point: "/mnt/persistent"
+
+  tasks:
+    - name: Install NFS client
+      apt:
+        name: nfs-common
+        state: present
+        update_cache: yes
+
+    - name: Create mount point
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Test NFS server connectivity
+      command: showmount -e {{ nfs_server }}
+      register: showmount_result
+      retries: 5
+      delay: 5
+      until: showmount_result.rc == 0
+
+    - name: Display available NFS exports
+      debug:
+        msg: "{{ showmount_result.stdout_lines }}"
+
+    - name: Mount NFS share
+      mount:
+        path: "{{ mount_point }}"
+        src: "{{ nfs_server }}:{{ mount_point }}"
+        fstype: nfs
+        state: mounted
+        opts: defaults,_netdev
+
+    - name: Verify NFS mount
+      command: df -h {{ mount_point }}
+      register: df_result
+      changed_when: false
+
+    - name: Display mount info
+      debug:
+        msg: "{{ df_result.stdout_lines }}"
+
+- name: Apply NFS-based PVs and PVCs
+  hosts: node1
+  become: yes
+  vars:
+    k8s_manifests_dir: "/home/cc/aesthetic_hub/k8s"
+
+  tasks:
+    - name: Apply Postgres PV and PVC
+      command: kubectl apply -f {{ k8s_manifests_dir }}/postgres.yaml
+      register: postgres_pv
+      changed_when: "'created' in postgres_pv.stdout or 'configured' in postgres_pv.stdout"
+
+    - name: Apply MinIO PV and PVC
+      command: kubectl apply -f {{ k8s_manifests_dir }}/platform/pvc.yaml
+      register: minio_pv
+      changed_when: "'created' in minio_pv.stdout or 'configured' in minio_pv.stdout"
+
+    - name: Apply Immich Upload PV and PVC
+      command: kubectl apply -f {{ k8s_manifests_dir }}/app/immich-upload-pvc.yaml
+      register: upload_pv
+      changed_when: "'created' in upload_pv.stdout or 'configured' in upload_pv.stdout"
+
+    - name: Wait for PVs to be bound
+      shell: kubectl get pv -o jsonpath='{.items[?(@.spec.storageClassName=="chameleon-volume")].status.phase}' | grep -o Bound | wc -l
+      register: bound_pvs
+      retries: 10
+      delay: 5
+      until: bound_pvs.stdout | int == 3
+      changed_when: false
+
+    - name: Show PV status
+      command: kubectl get pv
+      register: pv_status
+      changed_when: false
+
+    - name: Display PV status
+      debug:
+        msg: "{{ pv_status.stdout_lines }}"
+
+    - name: Show PVC status
+      command: kubectl get pvc -A
+      register: pvc_status
+      changed_when: false
+
+    - name: Display PVC status
+      debug:
+        msg: "{{ pvc_status.stdout_lines }}"

@@ -1,15 +1,30 @@
 apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: immich-postgres-pv
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: chameleon-volume
+  nfs:
+    server: 192.168.1.11  # node1 private IP
+    path: /mnt/persistent/postgres
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: immich-postgres-pvc
   namespace: aesthetic-hub
 spec:
-  storageClassName: local-path
+  storageClassName: chameleon-volume
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 5Gi
+      storage: 50Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
