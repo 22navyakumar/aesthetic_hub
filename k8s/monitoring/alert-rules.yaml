@@ -303,3 +303,32 @@ data:
             annotations:
               summary: "Aesthetic score distribution shifted significantly"
               description: "Median score shifted by {{ printf \"%.2f\" $value }} in last 30 min vs 1h ago — may indicate model promotion or data issue"
+
+      - name: aesthetic-model-quality
+        interval: 1m
+        rules:
+          - alert: AestheticCLIPInputDrift
+            expr: |
+              abs(
+                histogram_quantile(0.5, rate(clip_embedding_norm_bucket[6h])) -
+                histogram_quantile(0.5, rate(clip_embedding_norm_bucket[6h] offset 3d))
+              ) > 2.0
+            for: 6h
+            labels:
+              severity: warning
+              category: ml
+            annotations:
+              summary: "CLIP embedding norm drift detected"
+              description: "Input content distribution shifted >2.0 vs 3 days ago. Content type changing faster than weekly retraining. Consider triggering early retraining."
+
+          - alert: AestheticHighLowConfidenceRate
+            expr: |
+              rate(low_confidence_total[6h]) /
+              rate(score_image_request_duration_seconds_count[6h]) > 0.4
+            for: 2d
+            labels:
+              severity: warning
+              category: ml
+            annotations:
+              summary: "Low confidence rate >40% for 2 days"
+              description: "Model is uncertain on most predictions for sustained period. Data distribution has shifted beyond training data. Trigger early retraining."

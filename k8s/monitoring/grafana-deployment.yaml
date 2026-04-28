@@ -70,9 +70,14 @@ spec:
             - name: dashboards-provider
               mountPath: /etc/grafana/provisioning/dashboards
             - name: dashboard-cluster
-              mountPath: /var/lib/grafana/dashboards/cluster
+              mountPath: /var/lib/grafana/dashboards/cluster-overview.json
+              subPath: cluster-overview.json
             - name: dashboard-aesthetic
-              mountPath: /var/lib/grafana/dashboards/aesthetic
+              mountPath: /var/lib/grafana/dashboards/aesthetic-scoring.json
+              subPath: aesthetic-scoring.json
+            - name: dashboard-live-quality
+              mountPath: /var/lib/grafana/dashboards/live-model-quality.json
+              subPath: live-model-quality.json
           livenessProbe:
             httpGet:
               path: /api/health
@@ -105,6 +110,9 @@ spec:
         - name: dashboard-aesthetic
           configMap:
             name: grafana-dashboard-aesthetic
+        - name: dashboard-live-quality
+          configMap:
+            name: grafana-dashboard-live-quality
 ---
 apiVersion: v1
 kind: Service

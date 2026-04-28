@@ -14,6 +14,18 @@ data:
         isDefault: true
         jsonData:
           timeInterval: 30s
+      - name: AestheticPostgres
+        type: postgres
+        access: proxy
+        url: immich-postgres.aesthetic-hub.svc.cluster.local:5432
+        database: immich
+        user: immich
+        secureJsonData:
+          password: immich
+        jsonData:
+          sslmode: disable
+          postgresVersion: 1400
+          timescaledb: false
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -420,6 +432,238 @@ data:
             }
           ],
           "fieldConfig": {"defaults": {"unit": "ms"}}
+        }
+      ]
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-live-quality
+  namespace: monitoring
+data:
+  live-model-quality.json: |
+    {
+      "title": "Aesthetic Hub — Live Model Quality",
+      "uid": "aes-live-quality",
+      "tags": ["aesthetic-hub", "ml", "quality"],
+      "timezone": "browser",
+      "refresh": "30s",
+      "time": {"from": "now-6h", "to": "now"},
+      "schemaVersion": 38,
+      "panels": [
+        {
+          "type": "timeseries",
+          "title": "Feedback Loop: Avg Score by Event Type",
+          "gridPos": {"x": 0, "y": 0, "w": 24, "h": 10},
+          "datasource": "AestheticPostgres",
+          "targets": [
+            {
+              "rawSql": "SELECT date_trunc('hour', e.\"ingestedAt\") as time, e.\"eventType\" as metric, avg(s.score) as value FROM interaction_events e JOIN aesthetic_scores s ON e.\"assetId\" = s.\"assetId\" AND e.\"userId\" = s.\"userId\" WHERE e.\"ingestedAt\" > NOW() - INTERVAL '24 hours' AND e.\"eventType\" IN ('favorite', 'delete', 'archive', 'album_add', 'download', 'share') GROUP BY 1, 2 ORDER BY 1",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "custom": {"lineWidth": 2, "fillOpacity": 10}
+            }
+          },
+          "description": "Model health check: 'favorite' and 'album_add' should have higher scores than 'delete' and 'archive'. If lines converge or invert, model predictions are broken."
+        },
+        {
+          "type": "stat",
+          "title": "Score p50 (15m)",
+          "gridPos": {"x": 0, "y": 10, "w": 6, "h": 4},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, rate(aesthetic_score_bucket[15m]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "green", "value": 0.3},
+                  {"color": "red", "value": 0.8}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Cold Start Rate",
+          "gridPos": {"x": 6, "y": 10, "w": 6, "h": 4},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "rate(cold_start_total[15m]) / rate(score_image_request_duration_seconds_count[15m])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.5},
+                  {"color": "red", "value": 0.8}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Low Confidence Rate",
+          "gridPos": {"x": 12, "y": 10, "w": 6, "h": 4},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "rate(low_confidence_total[15m]) / rate(score_image_request_duration_seconds_count[15m])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "green", "value": null},
+                  {"color": "yellow", "value": 0.3},
+                  {"color": "red", "value": 0.5}
+                ]
+              }
+            }
+          },
+          "description": "RETRAINING INDICATOR: Sustained high rate (>40% for 2+ days) means model is uncertain. Data distribution has shifted beyond training data. Trigger early retraining."
+        },
+        {
+          "type": "stat",
+          "title": "Alpha p50",
+          "gridPos": {"x": 18, "y": 10, "w": 6, "h": 4},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, rate(aesthetic_alpha_bucket[1h]))",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "none",
+              "min": 0,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {"color": "red", "value": null},
+                  {"color": "yellow", "value": 0.1},
+                  {"color": "green", "value": 0.3}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Score Distribution Over Time",
+          "gridPos": {"x": 0, "y": 14, "w": 8, "h": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, rate(aesthetic_score_bucket[15m]))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, rate(aesthetic_score_bucket[15m]))",
+              "legendFormat": "p95",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {"unit": "percentunit", "min": 0, "max": 1}
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "CLIP Embedding Norm (Input Drift)",
+          "gridPos": {"x": 8, "y": 14, "w": 8, "h": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, rate(clip_embedding_norm_bucket[1h]))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, rate(clip_embedding_norm_bucket[1h]))",
+              "legendFormat": "p95",
+              "refId": "B"
+            }
+          ],
+          "description": "RETRAINING INDICATOR: If norm shifts >2.0 over 2-3 days, content distribution is changing (new cameras, AI images, screenshots). Model trained on old content won't generalize. Trigger early retraining."
+        },
+        {
+          "type": "timeseries",
+          "title": "Interaction Volume by Type (24h)",
+          "gridPos": {"x": 16, "y": 14, "w": 8, "h": 8},
+          "datasource": "AestheticPostgres",
+          "targets": [
+            {
+              "rawSql": "SELECT date_trunc('hour', \"ingestedAt\") as time, \"eventType\" as metric, count(*) as value FROM interaction_events WHERE \"ingestedAt\" > NOW() - INTERVAL '24 hours' GROUP BY 1, 2 ORDER BY 1",
+              "format": "time_series",
+              "refId": "A"
+            }
+          ],
+          "description": "RETRAINING INDICATOR: If interaction patterns shift significantly over 2-3 days (e.g., favorites drop >30%, new event types emerge), user behavior is drifting faster than weekly retraining cycle. Trigger early retraining."
+        },
+        {
+          "type": "timeseries",
+          "title": "Score-Image Latency p50/p95",
+          "gridPos": {"x": 0, "y": 22, "w": 12, "h": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.5, rate(score_image_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, rate(score_image_request_duration_seconds_bucket[5m]))",
+              "legendFormat": "p95",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {"defaults": {"unit": "s"}}
+        },
+        {
+          "type": "timeseries",
+          "title": "Error Rate by Type",
+          "gridPos": {"x": 12, "y": 22, "w": 12, "h": 8},
+          "datasource": "Prometheus",
+          "targets": [
+            {
+              "expr": "rate(score_image_errors_total[5m])",
+              "legendFormat": "{{error_type}}",
+              "refId": "A"
+            }
+          ]
         }
       ]
     }
