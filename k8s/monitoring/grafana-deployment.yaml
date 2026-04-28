@@ -45,7 +45,7 @@ spec:
             - name: GF_PATHS_PROVISIONING
               value: /etc/grafana/provisioning
             - name: GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH
-              value: /var/lib/grafana/dashboards/cluster-overview.json
+              value: /var/lib/grafana/dashboards/cluster/cluster-overview.json
             - name: GF_ALERTING_ENABLED
               value: "false"
             - name: GF_UNIFIED_ALERTING_ENABLED
@@ -70,7 +70,14 @@ spec:
             - name: dashboards-provider
               mountPath: /etc/grafana/provisioning/dashboards
             - name: dashboard-cluster
-              mountPath: /var/lib/grafana/dashboards
+              mountPath: /var/lib/grafana/dashboards/cluster-overview.json
+              subPath: cluster-overview.json
+            - name: dashboard-aesthetic
+              mountPath: /var/lib/grafana/dashboards/aesthetic-scoring.json
+              subPath: aesthetic-scoring.json
+            - name: dashboard-live-quality
+              mountPath: /var/lib/grafana/dashboards/live-model-quality.json
+              subPath: live-model-quality.json
           livenessProbe:
             httpGet:
               path: /api/health
@@ -100,6 +107,12 @@ spec:
         - name: dashboard-cluster
           configMap:
             name: grafana-dashboard-cluster
+        - name: dashboard-aesthetic
+          configMap:
+            name: grafana-dashboard-aesthetic
+        - name: dashboard-live-quality
+          configMap:
+            name: grafana-dashboard-live-quality
 ---
 apiVersion: v1
 kind: Service

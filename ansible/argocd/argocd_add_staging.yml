@@ -7,6 +7,8 @@
     repo_url: https://github.com/22navyakumar/aesthetic_hub.git
     app_path: k8s/staging
     argocd_namespace: argocd
+    target_namespace: aesthetic-hub-staging
+    target_revision: "{{ lookup('env', 'BRANCH') | default('main', true) }}"
 
   tasks:
 
@@ -27,15 +29,22 @@
         --grpc-web --port-forward --port-forward-namespace={{ argocd_namespace }}
       changed_when: false
 
-    - name: Detect external IP starting with 10.56
-      set_fact:
-        external_ip: "{{ ansible_all_ipv4_addresses | select('match', '^10\\.56\\..*') | list | first }}"
-
     - name: Create aesthetic-hub-staging namespace if missing
-      command: kubectl create namespace aesthetic-hub-staging
+      command: kubectl create namespace {{ target_namespace }}
       register: ns_create
       failed_when: ns_create.rc != 0 and "AlreadyExists" not in ns_create.stderr
       changed_when: "'created' in ns_create.stdout"
+
+    - name: Copy Immich Postgres secret into staging namespace
+      shell: |
+        set -e
+        password="$(kubectl get secret immich-postgres-secret -n aesthetic-hub -o jsonpath='{.data.password}' | base64 --decode)"
+        kubectl create secret generic immich-postgres-secret \
+          --namespace {{ target_namespace }} \
+          --from-literal=password="$password" \
+          --dry-run=client -o yaml | kubectl apply -f -
+      args:
+        executable: /bin/bash
 
     - name: Check if ArgoCD app exists
       command: argocd app get {{ app_name }} --port-forward --port-forward-namespace={{ argocd_namespace }}
@@ -48,10 +57,10 @@
       command: >
         argocd app create {{ app_name }} \
         --repo {{ repo_url }} \
+        --revision {{ target_revision }} \
         --path {{ app_path }} \
         --dest-server https://kubernetes.default.svc \
-        --dest-namespace "" \
-        --helm-set-string service.externalIP={{ external_ip }} \
+        --dest-namespace {{ target_namespace }} \
         --sync-policy automated --self-heal \
         --port-forward --port-forward-namespace={{ argocd_namespace }}
 
@@ -59,7 +68,8 @@
       when: app_check.rc == 0
       command: >
         argocd app set {{ app_name }} \
-        --helm-set-string service.externalIP={{ external_ip }} \
+        --revision {{ target_revision }} \
+        --dest-namespace {{ target_namespace }} \
         --port-forward --port-forward-namespace={{ argocd_namespace }}
 
     - name: Display ArgoCD app status

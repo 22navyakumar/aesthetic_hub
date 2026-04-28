@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: immich-config
+  namespace: aesthetic-hub
+data:
+  immich-config.yaml: |
+    job:
+      smartSearch:
+        concurrency: 4
+      faceDetection:
+        concurrency: 1
+      ocr:
+        concurrency: 1
+    machineLearning:
+      enabled: true
+      urls:
+        - http://immich-machine-learning.aesthetic-hub.svc.cluster.local:3003
+      availabilityChecks:
+        enabled: true
+        timeout: 5000
+        interval: 30000
+      clip:
+        enabled: true
+        modelName: ViT-L-14__openai
+      duplicateDetection:
+        enabled: true
+        maxDistance: 0.01
+      facialRecognition:
+        enabled: false
+        modelName: buffalo_l
+        minScore: 0.7
+        maxDistance: 0.5
+        minFaces: 3
+      ocr:
+        enabled: false
+        modelName: PP-OCRv5_mobile
+        minDetectionScore: 0.5
+        minRecognitionScore: 0.8
+        maxResolution: 736

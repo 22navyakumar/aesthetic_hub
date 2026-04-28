@@ -2,27 +2,64 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: bucket-init
-  namespace: aesthetic-hub
+  namespace: platform
 spec:
+  backoffLimit: 3
   template:
     spec:
-      containers:
-        - name: mc
-          image: minio/mc
-          command: ["sh", "-c"]
+      initContainers:
+        - name: wait-for-minio
+          image: curlimages/curl:latest
+          command: ["/bin/sh", "-c"]
           args:
             - |
-              mc alias set myminio http://minio.platform.svc.cluster.local:9000 $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY
-              mc mb --ignore-existing myminio/aesthetic-hub-data
+              until curl -f http://minio.platform.svc.cluster.local:9000/minio/health/live; do
+                echo "Waiting for MinIO to be ready..."
+                sleep 5
+              done
+              echo "MinIO is ready!"
+      containers:
+        - name: bucket-init
+          image: python:3.11-slim
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              set -e
+              echo "Installing dependencies..."
+              pip install --quiet minio pyarrow
+              echo "Running bucket initialization..."
+              python3 -m pipelines.batch.bucket_init
           env:
-            - name: AWS_ACCESS_KEY_ID
+            - name: MINIO_HOST
+              value: "minio.platform.svc.cluster.local:9000"
+            - name: MINIO_ROOT_USER
               valueFrom:
                 secretKeyRef:
                   name: minio-credentials
                   key: accesskey
-            - name: AWS_SECRET_ACCESS_KEY
+            - name: MINIO_ROOT_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: minio-credentials
                   key: secretkey
+            - name: PYTHONPATH
+              value: "/pipelines"
+          volumeMounts:
+            - name: triton-models
+              mountPath: /triton-models
+              readOnly: true
+            - name: pipelines
+              mountPath: /pipelines
+              readOnly: true
+      nodeSelector:
+        kubernetes.io/hostname: node1
+      volumes:
+        - name: triton-models
+          hostPath:
+            path: /home/cc/aesthetic_hub/triton-models
+            type: Directory
+        - name: pipelines
+          hostPath:
+            path: /home/cc/aesthetic_hub/aesthetic/pipelines
+            type: Directory
       restartPolicy: OnFailure
