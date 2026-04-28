@@ -411,11 +411,11 @@ data:
           "gridPos": {"h": 8, "w": 12, "x": 12, "y": 28},
           "targets": [
             {
-              "expr": "rate(nv_inference_request_duration_us_sum[5m]) / rate(nv_inference_request_duration_us_count[5m]) / 1000",
+              "expr": "rate(nv_inference_request_duration_us[5m]) / rate(nv_inference_count[5m]) / 1000",
               "legendFormat": "{{model}} avg (ms)"
             },
             {
-              "expr": "rate(nv_inference_queue_duration_us_sum[5m]) / rate(nv_inference_queue_duration_us_count[5m]) / 1000",
+              "expr": "rate(nv_inference_queue_duration_us[5m]) / rate(nv_inference_count[5m]) / 1000",
               "legendFormat": "{{model}} queue (ms)"
             }
           ],
