@@ -1,17 +1,17 @@
-# CronWorkflow: scheduled weekly retraining
-# Runs every Sunday at 02:00 UTC, which is low-traffic time.
-# Justification: the AVA dataset is static; new training data comes from
-# user feedback accumulated over the prior week (ratings on scored photos).
-# A weekly cadence balances freshness against GPU cost.
+# CronWorkflow: scheduled retraining
+# Two schedules:
+#   1. Friday 02:00 UTC — mid-week retraining after 2 days of data
+#   2. Sunday 14:00 UTC — end-of-week retraining after full data load
+---
 apiVersion: argoproj.io/v1alpha1
 kind: CronWorkflow
 metadata:
-  name: cron-aesthetic-train
+  name: cron-aesthetic-train-friday
   namespace: argo
   labels:
     app.kubernetes.io/part-of: aesthetic-hub
 spec:
-  schedule: "23 1 * * *"
+  schedule: "0 2 * * 5"
   timezone: "UTC"
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 3600
@@ -32,7 +32,37 @@ spec:
           value: "aesthetic-hub-data"
         - name: model-name
           value: "aesthetic-scorer"
-        - name: min-spearman-r
-          value: "0.70"
-        - name: min-ndcg-at-10
-          value: "0.65"
+        - name: serving-image
+          value: "ghcr.io/binti-p/aesthetic-service:main"
+---
+apiVersion: argoproj.io/v1alpha1
+kind: CronWorkflow
+metadata:
+  name: cron-aesthetic-train-sunday
+  namespace: argo
+  labels:
+    app.kubernetes.io/part-of: aesthetic-hub
+spec:
+  schedule: "0 14 * * 0"
+  timezone: "UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 5
+  workflowSpec:
+    workflowTemplateRef:
+      name: train-and-evaluate
+    arguments:
+      parameters:
+        - name: training-image
+          value: "ghcr.io/binti-p/aesthetic-service:main"
+        - name: mlflow-uri
+          value: "http://mlflow.platform.svc.cluster.local:5000"
+        - name: minio-endpoint
+          value: "http://minio.platform.svc.cluster.local:9000"
+        - name: data-bucket
+          value: "aesthetic-hub-data"
+        - name: model-name
+          value: "aesthetic-scorer"
+        - name: serving-image
+          value: "ghcr.io/binti-p/aesthetic-service:main"

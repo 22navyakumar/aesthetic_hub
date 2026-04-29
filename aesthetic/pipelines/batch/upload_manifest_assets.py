@@ -107,6 +107,7 @@ def main():
         help="CSV with worker_id and api_key columns, typically worker_api_keys.csv",
     )
     parser.add_argument("--limit", type=int, default=10, help="Max number of images to upload; set 0 for no limit")
+    parser.add_argument("--offset", type=int, default=0, help="Number of images to skip before uploading (for batching)")
     parser.add_argument("--dry-run", action="store_true", help="Only print the files that would be uploaded")
     args = parser.parse_args()
 
@@ -117,9 +118,15 @@ def main():
 
     uploaded = 0
     skipped = 0
+    skipped_offset = 0
     missing_workers = 0
 
     for row in iter_production_new_user_rows(manifest_csv):
+        # Skip rows for offset
+        if skipped_offset < args.offset:
+            skipped_offset += 1
+            continue
+
         worker_id = row.get("worker_id", "").strip()
         worker_entry = worker_api_keys.get(worker_id)
         if not worker_entry:
