@@ -95,6 +95,38 @@ setup() {
     log "Users created, API keys at: $WORKER_KEYS_CSV"
 }
 
+# ── Wait for scoring to complete ──────────────────────────────────────────────
+wait_for_scoring() {
+    log "Waiting for all assets to be scored..."
+
+    local max_wait=600  # 10 minutes max
+    local interval=15
+    local elapsed=0
+
+    while [[ "$elapsed" -lt "$max_wait" ]]; do
+        # Count assets without scores
+        local unscored
+        unscored=$(kubectl exec -n aesthetic-hub immich-postgres-0 -- psql -U immich -d immich -t -c "
+            SELECT COUNT(*)
+            FROM asset a
+            JOIN smart_search ss ON ss.\"assetId\" = a.id
+            LEFT JOIN aesthetic_scores sc ON sc.\"assetId\" = a.id
+            WHERE a.\"deletedAt\" IS NULL AND sc.\"assetId\" IS NULL
+        " | tr -d ' ')
+
+        if [[ "$unscored" -eq 0 ]] || [[ "$unscored" == "" ]]; then
+            log "All assets scored. Proceeding."
+            return 0
+        fi
+
+        log "Waiting... $unscored assets still unscored (${elapsed}s elapsed)"
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    log "WARNING: Timed out after ${max_wait}s with $unscored unscored assets. Proceeding anyway."
+}
+
 # ── Upload batch to Immich ────────────────────────────────────────────────────
 upload_batch() {
     local batch_num=$1
@@ -182,10 +214,13 @@ main() {
     # Step 1: Upload to Immich
     upload_batch "$batch_num" 2>&1 | tee -a "$logfile"
 
-    # Step 2: Simulate interactions
+    # Step 2: Wait for scoring to complete (poll DB)
+    wait_for_scoring 2>&1 | tee -a "$logfile"
+
+    # Step 3: Simulate interactions
     simulate_interactions 2>&1 | tee -a "$logfile"
 
-    # Step 3: Sync interaction counts
+    # Step 4: Sync interaction counts
     sync_interaction_counts 2>&1 | tee -a "$logfile"
 
     # Step 4: Increment batch counter
